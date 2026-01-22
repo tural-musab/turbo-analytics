@@ -31,14 +31,31 @@ turbo-analytics/
 
 ## Kurulum
 
-### 1. Python Bagimliliklari
+### 1. Virtual Environment Olustur
 
 ```bash
 cd backend
+
+# Virtual environment olustur
+python3 -m venv venv
+
+# Aktive et (macOS/Linux)
+source venv/bin/activate
+
+# Aktive et (Windows)
+venv\Scripts\activate
+```
+
+> **Not:** Terminal satırının başında `(venv)` görürseniz aktif demektir.
+
+### 2. Python Bagimliliklari
+
+```bash
+# venv aktif iken
 pip install -r requirements.txt
 ```
 
-### 2. Veritabanini Baslat
+### 3. Veritabanini Baslat
 
 ```bash
 python database.py
