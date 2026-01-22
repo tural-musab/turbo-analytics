@@ -108,6 +108,34 @@ def init_database() -> None:
         """
     )
 
+    # Marka cache tablosu
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cached_makes (
+            id INTEGER PRIMARY KEY,
+            turbo_id INTEGER UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            count INTEGER DEFAULT 0,
+            cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    # Model cache tablosu
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cached_models (
+            id INTEGER PRIMARY KEY,
+            turbo_id INTEGER NOT NULL,
+            make_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            count INTEGER DEFAULT 0,
+            cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(turbo_id, make_id)
+        )
+        """
+    )
+
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_views ON cars(views DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_history_turbo ON price_history(turbo_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_history_date ON price_history(recorded_at)")
@@ -115,6 +143,7 @@ def init_database() -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_brand ON cars(brand)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_price ON cars(price)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_year ON cars(year)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_cached_models_make ON cached_models(make_id)")
 
     conn.commit()
     conn.close()
@@ -742,6 +771,179 @@ def reset_database() -> Dict[str, int]:
         "deleted_sessions": sessions_count,
         "deleted_history": history_count,
     }
+
+
+# ==================== MARKA/MODEL CACHE FONKSIYONLARI ====================
+
+
+def get_cached_makes() -> List[Dict]:
+    """Cache'den marka listesini getir."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT turbo_id as id, name, count, cached_at
+        FROM cached_makes
+        ORDER BY name ASC
+        """
+    )
+
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results
+
+
+def get_cached_models(make_id: int) -> List[Dict]:
+    """Cache'den belirli bir markanin modellerini getir."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT turbo_id as id, name, count, cached_at
+        FROM cached_models
+        WHERE make_id = ?
+        ORDER BY name ASC
+        """,
+        (make_id,),
+    )
+
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results
+
+
+def save_cached_makes(makes: List[Dict]) -> int:
+    """Marka listesini cache'e kaydet."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Onceki cache'i temizle
+    cursor.execute("DELETE FROM cached_makes")
+
+    saved = 0
+    for make in makes:
+        try:
+            cursor.execute(
+                """
+                INSERT INTO cached_makes (turbo_id, name, count)
+                VALUES (?, ?, ?)
+                """,
+                (make.get("id"), make.get("name"), make.get("count", 0)),
+            )
+            saved += 1
+        except Exception as e:
+            print(f"Marka kayit hatasi: {e}")
+
+    conn.commit()
+    conn.close()
+    return saved
+
+
+def save_cached_models(make_id: int, models: List[Dict]) -> int:
+    """Belirli bir markanin modellerini cache'e kaydet."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Bu markanin onceki modellerini temizle
+    cursor.execute("DELETE FROM cached_models WHERE make_id = ?", (make_id,))
+
+    saved = 0
+    for model in models:
+        try:
+            cursor.execute(
+                """
+                INSERT INTO cached_models (turbo_id, make_id, name, count)
+                VALUES (?, ?, ?, ?)
+                """,
+                (model.get("id"), make_id, model.get("name"), model.get("count", 0)),
+            )
+            saved += 1
+        except Exception as e:
+            print(f"Model kayit hatasi: {e}")
+
+    conn.commit()
+    conn.close()
+    return saved
+
+
+def is_cache_valid(cache_type: str, make_id: Optional[int] = None, max_age_hours: int = 24) -> bool:
+    """Cache'in gecerli olup olmadigini kontrol et."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    if cache_type == "makes":
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM cached_makes
+            WHERE cached_at >= datetime('now', '-' || ? || ' hours')
+            """,
+            (max_age_hours,),
+        )
+    elif cache_type == "models" and make_id is not None:
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM cached_models
+            WHERE make_id = ? AND cached_at >= datetime('now', '-' || ? || ' hours')
+            """,
+            (make_id, max_age_hours),
+        )
+    else:
+        conn.close()
+        return False
+
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count > 0
+
+
+def get_cache_stats() -> Dict[str, Any]:
+    """Cache istatistiklerini getir."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*), MIN(cached_at), MAX(cached_at) FROM cached_makes")
+    makes_row = cursor.fetchone()
+
+    cursor.execute("SELECT COUNT(*), COUNT(DISTINCT make_id), MIN(cached_at), MAX(cached_at) FROM cached_models")
+    models_row = cursor.fetchone()
+
+    conn.close()
+
+    return {
+        "makes_count": makes_row[0],
+        "makes_oldest": makes_row[1],
+        "makes_newest": makes_row[2],
+        "models_count": models_row[0],
+        "models_makes_cached": models_row[1],
+        "models_oldest": models_row[2],
+        "models_newest": models_row[3],
+    }
+
+
+def clear_cache(cache_type: Optional[str] = None) -> Dict[str, int]:
+    """Cache'i temizle. None ise tum cache temizlenir."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    result = {"makes_deleted": 0, "models_deleted": 0}
+
+    if cache_type is None or cache_type == "makes":
+        cursor.execute("SELECT COUNT(*) FROM cached_makes")
+        result["makes_deleted"] = cursor.fetchone()[0]
+        cursor.execute("DELETE FROM cached_makes")
+
+    if cache_type is None or cache_type == "models":
+        cursor.execute("SELECT COUNT(*) FROM cached_models")
+        result["models_deleted"] = cursor.fetchone()[0]
+        cursor.execute("DELETE FROM cached_models")
+
+    conn.commit()
+    conn.close()
+    return result
 
 
 if __name__ == "__main__":

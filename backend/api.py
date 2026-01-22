@@ -25,6 +25,14 @@ from database import (
     save_cars_batch,
     save_cars_batch_with_session,
     search_cars,
+    # Cache fonksiyonlari
+    get_cached_makes,
+    get_cached_models,
+    save_cached_makes,
+    save_cached_models,
+    is_cache_valid,
+    get_cache_stats,
+    clear_cache,
 )
 from export import (
     export_cars_csv,
@@ -157,17 +165,55 @@ async def get_brands():
 
 
 @app.get("/api/makes")
-async def get_turbo_makes():
-    """Turbo.az'daki tum marka listesi (ID ve isim)."""
-    makes = await get_makes_async()
-    return makes
+async def get_turbo_makes(refresh: bool = False):
+    """
+    Turbo.az'daki tum marka listesi (ID ve isim).
+    Cache'den okur, refresh=true ile yeniler.
+    """
+    # Cache gecerli mi kontrol et (24 saat)
+    if not refresh and is_cache_valid("makes", max_age_hours=24):
+        cached = get_cached_makes()
+        if cached:
+            return cached
+
+    # Cache gecersiz veya bos - turbo.az'dan cek
+    try:
+        makes = await get_makes_async()
+        if makes:
+            save_cached_makes(makes)
+        return makes
+    except Exception as e:
+        # Hata durumunda cache'den dondur (eski olsa bile)
+        cached = get_cached_makes()
+        if cached:
+            return cached
+        return {"error": str(e), "message": "Marka listesi alinamadi ve cache bos"}
 
 
 @app.get("/api/models/{make_id}")
-async def get_turbo_models(make_id: int):
-    """Belirli bir marka icin model listesi."""
-    models = await get_models_async(make_id)
-    return models
+async def get_turbo_models(make_id: int, refresh: bool = False):
+    """
+    Belirli bir marka icin model listesi.
+    Cache'den okur, refresh=true ile yeniler.
+    """
+    # Cache gecerli mi kontrol et (24 saat)
+    if not refresh and is_cache_valid("models", make_id=make_id, max_age_hours=24):
+        cached = get_cached_models(make_id)
+        if cached:
+            return cached
+
+    # Cache gecersiz veya bos - turbo.az'dan cek
+    try:
+        models = await get_models_async(make_id)
+        if models:
+            save_cached_models(make_id, models)
+        return models
+    except Exception as e:
+        # Hata durumunda cache'den dondur (eski olsa bile)
+        cached = get_cached_models(make_id)
+        if cached:
+            return cached
+        return {"error": str(e), "message": "Model listesi alinamadi ve cache bos"}
 
 
 @app.get("/api/filter-info")
@@ -635,6 +681,63 @@ async def stop_scheduler():
     """Scheduler'i durdur."""
     await scheduler.stop()
     return {"status": "stopped"}
+
+
+# ==================== CACHE YONETIMI ====================
+
+
+@app.get("/api/cache/stats")
+async def get_cache_statistics():
+    """Cache istatistiklerini getir."""
+    return get_cache_stats()
+
+
+@app.post("/api/cache/refresh")
+async def refresh_cache(cache_type: str = Query("all", regex="^(all|makes|models)$")):
+    """
+    Cache'i yenile.
+    cache_type: 'all', 'makes', veya 'models'
+    """
+    result = {"refreshed": [], "errors": []}
+
+    if cache_type in ("all", "makes"):
+        try:
+            makes = await get_makes_async()
+            if makes:
+                count = save_cached_makes(makes)
+                result["refreshed"].append({"type": "makes", "count": count})
+            else:
+                result["errors"].append({"type": "makes", "error": "Marka listesi bos"})
+        except Exception as e:
+            result["errors"].append({"type": "makes", "error": str(e)})
+
+    # Models icin tum markalari gez (sadece cache_type="all" veya "models" ise)
+    if cache_type in ("all", "models"):
+        cached_makes = get_cached_makes()
+        if cached_makes:
+            models_count = 0
+            for make in cached_makes[:50]:  # Ilk 50 marka ile sinirla
+                try:
+                    models = await get_models_async(make["id"])
+                    if models:
+                        save_cached_models(make["id"], models)
+                        models_count += len(models)
+                except Exception:
+                    pass  # Hatalari sessizce gec
+            result["refreshed"].append({"type": "models", "count": models_count})
+        else:
+            result["errors"].append({"type": "models", "error": "Marka cache'i bos, once markalari yenileyin"})
+
+    return result
+
+
+@app.post("/api/cache/clear")
+async def clear_cache_data(cache_type: Optional[str] = None):
+    """
+    Cache'i temizle.
+    cache_type: None (tumu), 'makes', veya 'models'
+    """
+    return clear_cache(cache_type)
 
 
 if __name__ == "__main__":
