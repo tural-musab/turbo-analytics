@@ -98,7 +98,12 @@ class TurboAzScraper:
 
         select = soup.select_one('select[name="q[model][]"]')
         if select:
-            for option in select.select(f'option.{make_id}[value]'):
+            # CSS selector'da class rakamla baslamaz, manuel filtre
+            make_id_str = str(make_id)
+            for option in select.select("option[value]"):
+                classes = option.get("class", [])
+                if make_id_str not in classes:
+                    continue
                 value = option.get("value", "")
                 count = option.get("data-count", "0")
                 if value and value.isdigit():
