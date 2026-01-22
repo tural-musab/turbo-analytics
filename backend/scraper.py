@@ -1,7 +1,6 @@
 """
 Turbo.az Analytics - Web Scraper
-Async scraping with aiohttp + BeautifulSoup
-Filtre destekli versiyon
+curl_cffi ile Cloudflare bypass destekli scraper
 """
 
 import asyncio
@@ -9,85 +8,43 @@ import random
 import re
 import time
 from typing import Dict, List, Optional, Tuple, Union
-from urllib.parse import urlencode
 
-import aiohttp
 from bs4 import BeautifulSoup
+from curl_cffi.requests import AsyncSession
 
 
 class TurboAzScraper:
     BASE_URL = "https://turbo.az"
-    CONCURRENT_REQUESTS = 3  # Daha az concurrent request
-    REQUEST_DELAY = 1.0  # Daha uzun delay
+    CONCURRENT_REQUESTS = 3
+    REQUEST_DELAY = 1.5
 
-    # Gercekci User-Agent listesi (rotasyon icin)
-    USER_AGENTS = [
-        # Chrome macOS
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        # Chrome Windows
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        # Safari macOS
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
-        # Firefox Windows
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-        # Edge Windows
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+    # Chrome tarayıcı impersonation
+    IMPERSONATE_OPTIONS = [
+        "chrome110",
+        "chrome116",
+        "chrome119",
+        "chrome120",
     ]
 
     def __init__(self) -> None:
-        self.session: Optional[aiohttp.ClientSession] = None
+        self.session: Optional[AsyncSession] = None
         self.total_scraped = 0
         self.errors = 0
         self._makes_cache: Optional[List[Dict]] = None
-        self._user_agent = random.choice(self.USER_AGENTS)
-
-    def _get_headers(self, referer: Optional[str] = None) -> Dict[str, str]:
-        """Dinamik header olustur."""
-        headers = {
-            "User-Agent": self._user_agent,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "Accept-Language": "az,en-US;q=0.9,en;q=0.8,ru;q=0.7,tr;q=0.6",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-origin" if referer else "none",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "max-age=0",
-            "DNT": "1",
-            "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"macOS"',
-        }
-        if referer:
-            headers["Referer"] = referer
-        return headers
+        self._impersonate = random.choice(self.IMPERSONATE_OPTIONS)
 
     async def create_session(self) -> None:
-        """HTTP session olustur."""
-        timeout = aiohttp.ClientTimeout(total=60)
-        connector = aiohttp.TCPConnector(limit=self.CONCURRENT_REQUESTS, ssl=False)
-
-        # Cookie jar olustur
-        jar = aiohttp.CookieJar()
-
-        self.session = aiohttp.ClientSession(
-            timeout=timeout,
-            connector=connector,
-            headers=self._get_headers(),
-            cookie_jar=jar,
+        """HTTP session olustur (curl_cffi ile)."""
+        self.session = AsyncSession(
+            impersonate=self._impersonate,
+            timeout=60,
         )
 
         # Ilk olarak ana sayfayi ziyaret et (cookie almak icin)
         try:
-            async with self.session.get(
-                self.BASE_URL,
-                headers=self._get_headers()
-            ) as response:
-                await response.text()
-                print(f"Initial visit: {response.status}")
-                await asyncio.sleep(2)  # Bekle
+            response = await self.session.get(self.BASE_URL)
+            print(f"Initial visit: {response.status_code}")
+            await asyncio.sleep(2)
         except Exception as e:
             print(f"Initial visit error: {e}")
 
@@ -96,6 +53,50 @@ class TurboAzScraper:
         if self.session:
             await self.session.close()
             self.session = None
+
+    async def fetch_page(self, url: str) -> Optional[str]:
+        """Sayfa icerigini cek."""
+        if not self.session:
+            raise RuntimeError("Session is not initialized")
+
+        delay = self.REQUEST_DELAY + random.uniform(0.5, 1.5)
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = await self.session.get(url)
+
+                if response.status_code == 200:
+                    await asyncio.sleep(delay)
+                    return response.text
+                elif response.status_code == 403:
+                    print(f"HTTP 403 (attempt {attempt + 1}/{max_retries}): {url}")
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 5
+                        print(f"Waiting {wait_time}s before retry...")
+                        await asyncio.sleep(wait_time)
+                        # Impersonate degistir
+                        self._impersonate = random.choice(self.IMPERSONATE_OPTIONS)
+                        await self.session.close()
+                        self.session = AsyncSession(
+                            impersonate=self._impersonate,
+                            timeout=60,
+                        )
+                        continue
+                    return None
+                else:
+                    print(f"HTTP {response.status_code}: {url}")
+                    return None
+            except Exception as exc:
+                self.errors += 1
+                print(f"Fetch error (attempt {attempt + 1}): {url} - {exc}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(3)
+                    continue
+                return None
+
+        await asyncio.sleep(delay)
+        return None
 
     async def get_makes(self) -> List[Dict]:
         """Marka listesini cek (ID ve isim)."""
@@ -137,7 +138,6 @@ class TurboAzScraper:
 
         select = soup.select_one('select[name="q[model][]"]')
         if select:
-            # CSS selector'da class rakamla baslamaz, manuel filtre
             make_id_str = str(make_id)
             for option in select.select("option[value]"):
                 classes = option.get("class", [])
@@ -152,7 +152,6 @@ class TurboAzScraper:
                         "count": int(count) if count.isdigit() else 0
                     })
 
-        # Arac sayisina gore sirala
         models.sort(key=lambda x: x["count"], reverse=True)
         return models
 
@@ -167,23 +166,23 @@ class TurboAzScraper:
         max_year: Optional[int] = None,
     ) -> str:
         """Filtre parametreleriyle URL olustur."""
-        params: List[Tuple[str, str]] = []
-        params.append(("page", str(page)))
+        params: List[str] = []
+        params.append(f"page={page}")
 
         if make_id:
-            params.append(("q[make][]", str(make_id)))
+            params.append(f"q[make][]={make_id}")
         if model_id:
-            params.append(("q[model][]", str(model_id)))
+            params.append(f"q[model][]={model_id}")
         if min_price:
-            params.append(("q[price_from]", str(min_price)))
+            params.append(f"q[price_from]={min_price}")
         if max_price:
-            params.append(("q[price_to]", str(max_price)))
+            params.append(f"q[price_to]={max_price}")
         if min_year:
-            params.append(("q[year_from]", str(min_year)))
+            params.append(f"q[year_from]={min_year}")
         if max_year:
-            params.append(("q[year_to]", str(max_year)))
+            params.append(f"q[year_to]={max_year}")
 
-        return f"{self.BASE_URL}/autos?{urlencode(params)}"
+        return f"{self.BASE_URL}/autos?{'&'.join(params)}"
 
     async def get_total_pages(
         self,
@@ -211,7 +210,6 @@ class TurboAzScraper:
 
         soup = BeautifulSoup(html, "lxml")
 
-        # Son sayfa numarasini bul
         pagination = soup.select('a[href*="page="]')
         max_page = 1
         for link in pagination:
@@ -222,51 +220,6 @@ class TurboAzScraper:
                 max_page = max(max_page, page_num)
 
         return max_page
-
-    async def fetch_page(self, url: str, referer: Optional[str] = None) -> Optional[str]:
-        """Sayfa icerigini cek."""
-        if not self.session:
-            raise RuntimeError("Session is not initialized")
-
-        # Referer yoksa BASE_URL kullan
-        if not referer:
-            referer = self.BASE_URL
-
-        # Her istekte rastgele delay ekle (bot algılamayı zorlaştırır)
-        delay = self.REQUEST_DELAY + random.uniform(0.5, 1.5)
-
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                headers = self._get_headers(referer=referer)
-                async with self.session.get(url, headers=headers) as response:
-                    if response.status == 200:
-                        await asyncio.sleep(delay)
-                        return await response.text()
-                    elif response.status == 403:
-                        print(f"HTTP 403 (attempt {attempt + 1}/{max_retries}): {url}")
-                        if attempt < max_retries - 1:
-                            # 403 durumunda daha uzun bekle ve yeniden dene
-                            wait_time = (attempt + 1) * 5
-                            print(f"Waiting {wait_time}s before retry...")
-                            await asyncio.sleep(wait_time)
-                            # User-Agent'i degistir
-                            self._user_agent = random.choice(self.USER_AGENTS)
-                            continue
-                        return None
-                    else:
-                        print(f"HTTP {response.status}: {url}")
-                        return None
-            except Exception as exc:
-                self.errors += 1
-                print(f"Fetch error (attempt {attempt + 1}): {url} - {exc}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(3)
-                    continue
-                return None
-
-        await asyncio.sleep(delay)
-        return None
 
     @staticmethod
     def parse_price(price_text: str) -> Tuple[int, str]:
@@ -431,60 +384,46 @@ class TurboAzScraper:
         min_year: Optional[int] = None,
         max_year: Optional[int] = None,
     ) -> List[Dict]:
-        """Belirtilen sayfa araligini scrape et (filtre destekli)."""
+        """Belirtilen sayfa araligini scrape et (sıralı - 403 engelini aşmak için)."""
         print(f"Sayfa {start_page}-{end_page} taraniyor...")
 
         all_cars: List[Dict] = []
-        batch_size = 2  # Her seferinde sadece 2 sayfa paralel
 
-        for batch_start in range(start_page, end_page + 1, batch_size):
-            batch_end = min(batch_start + batch_size - 1, end_page)
+        for page_num in range(start_page, end_page + 1):
+            cars = await self.parse_listing_page(
+                page_num,
+                make_id=make_id,
+                model_id=model_id,
+                min_price=min_price,
+                max_price=max_price,
+                min_year=min_year,
+                max_year=max_year,
+            )
+            all_cars.extend(cars)
 
-            tasks = [
-                self.parse_listing_page(
-                    i,
-                    make_id=make_id,
-                    model_id=model_id,
-                    min_price=min_price,
-                    max_price=max_price,
-                    min_year=min_year,
-                    max_year=max_year,
-                )
-                for i in range(batch_start, batch_end + 1)
-            ]
-            pages_results = await asyncio.gather(*tasks)
-
-            for cars in pages_results:
-                all_cars.extend(cars)
-
-            progress = batch_end - start_page + 1
+            progress = page_num - start_page + 1
             total = end_page - start_page + 1
-            print(f"Sayfa ilerleme: {progress}/{total}")
+            print(f"Sayfa ilerleme: {progress}/{total} ({len(all_cars)} arac)")
 
-            # Batch aralarinda biraz bekle
-            if batch_end < end_page:
-                await asyncio.sleep(random.uniform(2, 4))
+            # Her sayfa arasinda bekle
+            await asyncio.sleep(random.uniform(1.5, 3.0))
 
         print(f"{len(all_cars)} arac bulundu")
         return all_cars
 
-    async def scrape_with_details(self, cars: List[Dict], batch_size: int = 10) -> List[Dict]:
-        """Araclarin detay sayfalarini cek (baxis sayisi icin)."""
+    async def scrape_with_details(self, cars: List[Dict], batch_size: int = 5) -> List[Dict]:
+        """Araclarin detay sayfalarini cek (sıralı)."""
         print(f"{len(cars)} arac icin detaylar cekiliyor...")
 
         detailed_cars: List[Dict] = []
 
-        for i in range(0, len(cars), batch_size):
-            batch = cars[i : i + batch_size]
-            tasks = [self.parse_detail_page(car) for car in batch]
-            results = await asyncio.gather(*tasks)
-            detailed_cars.extend(results)
+        for i, car in enumerate(cars):
+            detailed_car = await self.parse_detail_page(car)
+            detailed_cars.append(detailed_car)
 
-            progress = min(i + batch_size, len(cars))
-            print(f"Ilerleme: {progress}/{len(cars)} ({progress * 100 // len(cars)}%)")
-
-            # Batch aralarinda bekle
-            await asyncio.sleep(random.uniform(2, 4))
+            progress = i + 1
+            if progress % 10 == 0 or progress == len(cars):
+                print(f"Ilerleme: {progress}/{len(cars)} ({progress * 100 // len(cars)}%)")
 
         return detailed_cars
 
