@@ -215,13 +215,13 @@
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-gray-400 mb-1">Max Sayfa (1-100)</label>
+                            <label className="block text-sm text-gray-400 mb-1">Max Sayfa (1-500)</label>
                             <input
                                 type="number"
                                 value={maxPages}
                                 onChange={(e) => {
                                     const val = parseInt(e.target.value, 10);
-                                    if (!isNaN(val) && val >= 1 && val <= 100) {
+                                    if (!isNaN(val) && val >= 1 && val <= 500) {
                                         setMaxPages(val);
                                     } else if (e.target.value === '') {
                                         setMaxPages('');
@@ -229,12 +229,12 @@
                                 }}
                                 onBlur={(e) => {
                                     if (!maxPages || maxPages < 1) setMaxPages(1);
-                                    if (maxPages > 100) setMaxPages(100);
+                                    if (maxPages > 500) setMaxPages(500);
                                 }}
                                 min="1"
-                                max="100"
+                                max="500"
                                 step="1"
-                                placeholder="1-100"
+                                placeholder="1-500"
                                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                             />
                         </div>
@@ -543,7 +543,7 @@
                                         value={formMaxPages}
                                         onChange={(e) => setFormMaxPages(e.target.value)}
                                         min="1"
-                                        max="100"
+                                        max="500"
                                         className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2"
                                     />
                                 </div>

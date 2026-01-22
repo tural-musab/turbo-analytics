@@ -212,7 +212,7 @@ async def trigger_filtered_scrape(
     max_price: Optional[int] = None,
     min_year: Optional[int] = None,
     max_year: Optional[int] = None,
-    max_pages: int = Query(50, ge=1, le=100),
+    max_pages: int = Query(50, ge=1, le=500),
     with_details: bool = True,
 ):
     """Filtrelenmiş scraping tetikle (session takipli)."""
@@ -514,7 +514,7 @@ async def create_schedule(
     max_price: Optional[int] = None,
     min_year: Optional[int] = None,
     max_year: Optional[int] = None,
-    max_pages: int = Query(50, ge=1, le=100),
+    max_pages: int = Query(50, ge=1, le=500),
     with_details: bool = True,
 ):
     """Yeni zamanli is olustur."""
@@ -559,7 +559,7 @@ async def update_schedule(
     schedule_type: Optional[str] = Query(None, pattern="^(hourly|daily|weekly)$"),
     schedule_time: Optional[str] = Query(None, pattern="^\\d{2}:\\d{2}$"),
     schedule_days: Optional[str] = None,
-    max_pages: Optional[int] = Query(None, ge=1, le=100),
+    max_pages: Optional[int] = Query(None, ge=1, le=500),
     with_details: Optional[bool] = None,
     is_active: Optional[bool] = None,
 ):
