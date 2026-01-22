@@ -114,7 +114,8 @@ curl -X POST "http://localhost:8000/api/scrape?pages=3"
 
 - Python 3.10+
 - FastAPI
-- aiohttp (async HTTP)
+- undetected-chromedriver (Cloudflare bypass)
+- Selenium (browser automation)
 - BeautifulSoup4 (HTML parsing)
 - SQLite (veritabani)
 
@@ -130,6 +131,29 @@ curl -X POST "http://localhost:8000/api/scrape?pages=3"
 - Scraper, turbo.az'in sunucularina asiri yuklenmeyi onlemek icin rate limiting kullanir
 - Detay sayfalari paralel olarak cekilir (varsayilan 20 concurrent request)
 - Veriler SQLite veritabaninda saklanir
+
+## Cloudflare Bypass
+
+Turbo.az, Cloudflare bot korumasi kullanmaktadir. Bu koruma, standart HTTP isteklerini engellemektedir.
+
+### Denenen Yaklasimlar
+
+| Yontem                   | Sonuc        | Aciklama                                                  |
+|--------------------------|--------------|-----------------------------------------------------------|
+| aiohttp + headers        | ❌ Basarisiz | User-Agent rotasyonu ve gelismis headers ile denendi      |
+| curl_cffi                | ❌ Basarisiz | TLS fingerprint impersonation ile Chrome/Firefox taklidi  |
+| Playwright (headless)    | ❌ Basarisiz | Headless Chrome ve Firefox ile denendi                    |
+| Playwright (visible)     | ❌ Basarisiz | Gorunur tarayici ile bile engellendi                      |
+| undetected-chromedriver  | ✅ Basarili  | Cloudflare bypass icin ozel yapilmis Chrome driver        |
+
+### Cozum
+
+`undetected-chromedriver` kullanilarak Cloudflare korumasi basariyla gecilmistir. Bu kutuphane:
+
+- Gercek Chrome tarayicisi kullanir
+- Anti-bot detection patch'leri uygulanmistir
+- Selenium WebDriver uyumludur
+- Hem headless hem de visible modda calisir
 
 ## Lisans
 

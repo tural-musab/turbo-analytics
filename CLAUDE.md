@@ -11,7 +11,8 @@ Turbo.az (Azerbaycan araba pazari) icin web scraping ve analiz platformu.
 ### Backend
 - **Dil:** Python 3.10+
 - **Framework:** FastAPI
-- **Async HTTP:** aiohttp
+- **Web Scraping:** undetected-chromedriver (Cloudflare bypass)
+- **Browser Automation:** Selenium WebDriver
 - **HTML Parsing:** BeautifulSoup4 + lxml
 - **Veritabani:** SQLite
 
@@ -91,6 +92,22 @@ turbo-analytics/
 
 ## Scraper Notlari
 
+### Cloudflare Bypass
+
+Turbo.az Cloudflare bot korumasi kullanmaktadir. Asagidaki yontemler denenmis ve basarisiz olmustur:
+
+1. **aiohttp + headers** - User-Agent rotasyonu ve gelismis headers → 403 Forbidden
+2. **curl_cffi** - TLS fingerprint impersonation → 403 Forbidden
+3. **Playwright (headless/visible)** - Chrome ve Firefox → 403 Forbidden
+
+**Cozum:** `undetected-chromedriver` kullanilarak Cloudflare korumasi basariyla gecilmistir.
+
+```python
+import undetected_chromedriver as uc
+options = uc.ChromeOptions()
+driver = uc.Chrome(options=options)
+```
+
 ### Turbo.az HTML Selektorleri
 - `.products-i` - Arac karti container
 - `.products-i__link` - Detay sayfasi linki
@@ -99,10 +116,11 @@ turbo-analytics/
 - `.products-i__attributes` - Yil, Motor, KM
 - `.products-i__datetime` - Sehir, Tarih
 
-### Rate Limiting
-- CONCURRENT_REQUESTS: 20
-- REQUEST_DELAY: 0.1 saniye
-- Batch size: 50 (detay sayfalari icin)
+### Scraper Mimarisi
+
+- **Browser:** undetected-chromedriver (Chrome)
+- **Mod:** Headless veya visible (varsayilan: visible)
+- **Async Wrapper:** ThreadPoolExecutor ile async API uyumlulugu
 
 ## Gelistirme Komutlari
 
@@ -123,9 +141,10 @@ rm backend/turbo_analytics.db && python backend/database.py
 ## Onemli Notlar
 
 1. **Encoding:** Azerbaycan Turkcesi karakterleri icin UTF-8 kullan
-2. **Async:** Scraper tamamen async, blocking call'lardan kacin
-3. **Error Handling:** Scraper hatalarini logla ama devam et
-4. **CORS:** API tum origin'lere acik (development icin)
+2. **Scraper:** undetected-chromedriver kullanir (Cloudflare bypass icin)
+3. **Async Uyumluluk:** Scraper senkron calisir, API icin ThreadPoolExecutor wrapper'lari var
+4. **Error Handling:** Scraper hatalarini logla ama devam et
+5. **CORS:** API tum origin'lere acik (development icin)
 
 ## Gelecek Gelistirmeler
 
