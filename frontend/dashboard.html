@@ -94,8 +94,11 @@
         const FilterBar = ({ filters, setFilters, sessions }) => {
             const [brands, setBrands] = useState([]);
             const [allBrands, setAllBrands] = useState([]);
+            const [makes, setMakes] = useState([]);
+            const [models, setModels] = useState([]);
+            const [modelsLoading, setModelsLoading] = useState(false);
 
-            // Tum markalari yukle (ilk yukleme)
+            // Tum markalari ve make listesini yukle (ilk yukleme)
             useEffect(() => {
                 fetch(API_URL + '/brands')
                     .then(res => res.json())
@@ -103,6 +106,11 @@
                         setAllBrands(data);
                         if (!filters.sessionId) setBrands(data);
                     })
+                    .catch(console.error);
+
+                fetch(API_URL + '/makes')
+                    .then(res => res.json())
+                    .then(data => setMakes(data))
                     .catch(console.error);
             }, []);
 
@@ -117,12 +125,34 @@
                     setBrands(allBrands);
                 }
                 // Session degistiginde marka filtresini sifirla
-                setFilters(f => ({...f, brand: ''}));
+                setFilters(f => ({...f, brand: '', model: ''}));
             }, [filters.sessionId, allBrands]);
+
+            // Marka secildiginde modelleri yukle
+            useEffect(() => {
+                setModels([]);
+                if (!filters.brand) return;
+
+                // Marka adından make_id bul
+                const make = makes.find(m => m.name === filters.brand);
+                if (!make) return;
+
+                setModelsLoading(true);
+                fetch(API_URL + '/models/' + make.id)
+                    .then(res => res.json())
+                    .then(data => {
+                        setModels(data);
+                        setModelsLoading(false);
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        setModelsLoading(false);
+                    });
+            }, [filters.brand, makes]);
 
             return (
                 <div className="glass rounded-xl p-4 mb-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4">
                         <div>
                             <label className="block text-sm text-gray-400 mb-1">Session</label>
                             <select
@@ -140,12 +170,26 @@
                             <label className="block text-sm text-gray-400 mb-1">Marka</label>
                             <select
                                 value={filters.brand || ''}
-                                onChange={(e) => setFilters({...filters, brand: e.target.value})}
+                                onChange={(e) => setFilters({...filters, brand: e.target.value, model: ''})}
                                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
                             >
                                 <option value="">Tum Markalar</option>
                                 {brands.map(b => (
                                     <option key={b.brand} value={b.brand}>{b.brand} ({b.count})</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Model</label>
+                            <select
+                                value={filters.model || ''}
+                                onChange={(e) => setFilters({...filters, model: e.target.value})}
+                                disabled={!filters.brand || modelsLoading}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+                            >
+                                <option value="">{modelsLoading ? 'Yukleniyor...' : 'Tum Modeller'}</option>
+                                {models.map(m => (
+                                    <option key={m.id} value={m.name}>{m.name} ({m.count})</option>
                                 ))}
                             </select>
                         </div>
@@ -431,7 +475,14 @@
                     fetch(API_URL + '/cars?' + params.toString())
                         .then(res => res.json())
                         .then(data => {
-                            setAllCars(data);
+                            // Client-side model filtresi
+                            let filteredData = data;
+                            if (filters.model) {
+                                filteredData = data.filter(car =>
+                                    car.model && car.model.toLowerCase().includes(filters.model.toLowerCase())
+                                );
+                            }
+                            setAllCars(filteredData);
                             setLoading(false);
                         })
                         .catch(err => {
@@ -744,6 +795,7 @@
             const [filters, setFilters] = useState({
                 sessionId: initialSessionId || '',
                 brand: '',
+                model: '',
                 minPrice: '',
                 maxPrice: '',
                 minYear: '',
