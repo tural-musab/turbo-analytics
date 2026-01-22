@@ -126,6 +126,184 @@
             return <canvas ref={chartRef} />;
         };
 
+        const FilterPanel = ({ onScrapeComplete }) => {
+            const [makes, setMakes] = useState([]);
+            const [selectedMake, setSelectedMake] = useState('');
+            const [minPrice, setMinPrice] = useState('');
+            const [maxPrice, setMaxPrice] = useState('');
+            const [minYear, setMinYear] = useState('');
+            const [maxYear, setMaxYear] = useState('');
+            const [maxPages, setMaxPages] = useState(20);
+            const [filterInfo, setFilterInfo] = useState(null);
+            const [scraping, setScraping] = useState(false);
+            const [expanded, setExpanded] = useState(false);
+
+            useEffect(() => {
+                fetch(API_URL + '/makes')
+                    .then(res => res.json())
+                    .then(data => setMakes(data))
+                    .catch(err => console.error('Makes fetch error:', err));
+            }, []);
+
+            useEffect(() => {
+                if (!selectedMake && !minPrice && !maxPrice && !minYear && !maxYear) {
+                    setFilterInfo(null);
+                    return;
+                }
+
+                const params = new URLSearchParams();
+                if (selectedMake) params.append('make_id', selectedMake);
+                if (minPrice) params.append('min_price', minPrice);
+                if (maxPrice) params.append('max_price', maxPrice);
+                if (minYear) params.append('min_year', minYear);
+                if (maxYear) params.append('max_year', maxYear);
+
+                fetch(API_URL + '/filter-info?' + params.toString())
+                    .then(res => res.json())
+                    .then(data => setFilterInfo(data))
+                    .catch(err => console.error('Filter info error:', err));
+            }, [selectedMake, minPrice, maxPrice, minYear, maxYear]);
+
+            const handleFilteredScrape = async () => {
+                if (scraping) return;
+                setScraping(true);
+
+                const params = new URLSearchParams();
+                if (selectedMake) params.append('make_id', selectedMake);
+                if (minPrice) params.append('min_price', minPrice);
+                if (maxPrice) params.append('max_price', maxPrice);
+                if (minYear) params.append('min_year', minYear);
+                if (maxYear) params.append('max_year', maxYear);
+                params.append('max_pages', maxPages);
+
+                try {
+                    const res = await fetch(API_URL + '/scrape-filtered?' + params.toString(), { method: 'POST' });
+                    const data = await res.json();
+                    alert('Tamamlandi! ' + data.total_scraped + ' arac cekildi (' + data.elapsed_seconds + ' sn)');
+                    if (onScrapeComplete) onScrapeComplete();
+                } catch (err) {
+                    alert('Scraping basarisiz!');
+                } finally {
+                    setScraping(false);
+                }
+            };
+
+            const selectedMakeName = makes.find(m => m.id == selectedMake)?.name || 'Tum Markalar';
+
+            return (
+                <div className="glass rounded-2xl p-4 mb-6">
+                    <div
+                        className="flex items-center justify-between cursor-pointer"
+                        onClick={() => setExpanded(!expanded)}
+                    >
+                        <div className="flex items-center gap-3">
+                            <span className="text-xl">🎯</span>
+                            <span className="font-semibold">Filtrelenmiş Veri Cekimi</span>
+                            {selectedMake && <span className="bg-blue-500 px-2 py-1 rounded text-sm">{selectedMakeName}</span>}
+                        </div>
+                        <span className="text-gray-400">{expanded ? '▲' : '▼'}</span>
+                    </div>
+
+                    {expanded && (
+                        <div className="mt-4 space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Marka</label>
+                                    <select
+                                        value={selectedMake}
+                                        onChange={(e) => setSelectedMake(e.target.value)}
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                                    >
+                                        <option value="">Tum Markalar</option>
+                                        {makes.map(make => (
+                                            <option key={make.id} value={make.id}>{make.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Min Fiyat (AZN)</label>
+                                    <input
+                                        type="number"
+                                        value={minPrice}
+                                        onChange={(e) => setMinPrice(e.target.value)}
+                                        placeholder="0"
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Max Fiyat (AZN)</label>
+                                    <input
+                                        type="number"
+                                        value={maxPrice}
+                                        onChange={(e) => setMaxPrice(e.target.value)}
+                                        placeholder="999999"
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Min Yil</label>
+                                    <input
+                                        type="number"
+                                        value={minYear}
+                                        onChange={(e) => setMinYear(e.target.value)}
+                                        placeholder="2000"
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Max Yil</label>
+                                    <input
+                                        type="number"
+                                        value={maxYear}
+                                        onChange={(e) => setMaxYear(e.target.value)}
+                                        placeholder="2025"
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Max Sayfa</label>
+                                    <input
+                                        type="number"
+                                        value={maxPages}
+                                        onChange={(e) => setMaxPages(e.target.value)}
+                                        min="1"
+                                        max="100"
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                                    />
+                                </div>
+                            </div>
+
+                            {filterInfo && (
+                                <div className="bg-gray-800 rounded-lg p-3 flex items-center justify-between">
+                                    <div className="text-sm">
+                                        <span className="text-gray-400">Toplam: </span>
+                                        <span className="font-semibold">{filterInfo.total_pages} sayfa</span>
+                                        <span className="text-gray-400 mx-2">|</span>
+                                        <span className="text-gray-400">~</span>
+                                        <span className="font-semibold">{formatNumber(filterInfo.estimated_cars)} arac</span>
+                                    </div>
+                                    <div className="text-sm text-gray-400">
+                                        Cekilecek: {Math.min(filterInfo.total_pages, maxPages)} sayfa
+                                    </div>
+                                </div>
+                            )}
+
+                            <button
+                                onClick={handleFilteredScrape}
+                                disabled={scraping}
+                                className={'w-full py-3 rounded-xl font-semibold ' + (scraping ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600')}
+                            >
+                                {scraping ? 'Veriler Cekiliyor...' : '🚀 Filtrelenmiş Verileri Cek'}
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
         const App = () => {
             const [stats, setStats] = useState(null);
             const [topViewed, setTopViewed] = useState([]);
@@ -222,12 +400,14 @@
                         </button>
                     </header>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
                         <StatCard title="Toplam Arac" value={formatNumber(totalCars)} icon="C" color="border-l-4 border-blue-500" />
                         <StatCard title="Toplam Goruntulenme" value={formatNumber(totalViews)} icon="V" color="border-l-4 border-green-500" />
                         <StatCard title="Ortalama Fiyat" value={formatNumber(avgPrice) + ' AZN'} icon="$" color="border-l-4 border-yellow-500" />
                         <StatCard title="Marka Sayisi" value={topBrands.length} icon="B" color="border-l-4 border-purple-500" />
                     </div>
+
+                    <FilterPanel onScrapeComplete={fetchData} />
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         <div className="lg:col-span-2">

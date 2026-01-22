@@ -1,12 +1,15 @@
 """
 Turbo.az Analytics - Web Scraper
 Async scraping with aiohttp + BeautifulSoup
+Filtre destekli versiyon
 """
 
 import asyncio
+import random
 import re
 import time
 from typing import Dict, List, Optional, Tuple, Union
+from urllib.parse import urlencode
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -21,6 +24,7 @@ class TurboAzScraper:
         self.session: Optional[aiohttp.ClientSession] = None
         self.total_scraped = 0
         self.errors = 0
+        self._makes_cache: Optional[List[Dict]] = None
 
     async def create_session(self) -> None:
         """HTTP session olustur."""
@@ -53,6 +57,95 @@ class TurboAzScraper:
         if self.session:
             await self.session.close()
             self.session = None
+
+    async def get_makes(self) -> List[Dict]:
+        """Marka listesini cek (ID ve isim)."""
+        if self._makes_cache:
+            return self._makes_cache
+
+        url = f"{self.BASE_URL}/autos"
+        html = await self.fetch_page(url)
+
+        if not html:
+            return []
+
+        soup = BeautifulSoup(html, "lxml")
+        makes: List[Dict] = []
+
+        select = soup.select_one('select[name="q[make][]"]')
+        if select:
+            for option in select.select("option[value]"):
+                value = option.get("value", "")
+                if value and value.isdigit():
+                    makes.append({
+                        "id": int(value),
+                        "name": option.text.strip()
+                    })
+
+        self._makes_cache = makes
+        return makes
+
+    def build_filter_url(
+        self,
+        page: int = 1,
+        make_id: Optional[int] = None,
+        min_price: Optional[int] = None,
+        max_price: Optional[int] = None,
+        min_year: Optional[int] = None,
+        max_year: Optional[int] = None,
+    ) -> str:
+        """Filtre parametreleriyle URL olustur."""
+        params: List[Tuple[str, str]] = []
+        params.append(("page", str(page)))
+
+        if make_id:
+            params.append(("q[make][]", str(make_id)))
+        if min_price:
+            params.append(("q[price_from]", str(min_price)))
+        if max_price:
+            params.append(("q[price_to]", str(max_price)))
+        if min_year:
+            params.append(("q[year_from]", str(min_year)))
+        if max_year:
+            params.append(("q[year_to]", str(max_year)))
+
+        return f"{self.BASE_URL}/autos?{urlencode(params)}"
+
+    async def get_total_pages(
+        self,
+        make_id: Optional[int] = None,
+        min_price: Optional[int] = None,
+        max_price: Optional[int] = None,
+        min_year: Optional[int] = None,
+        max_year: Optional[int] = None,
+    ) -> int:
+        """Filtreye gore toplam sayfa sayisini bul."""
+        url = self.build_filter_url(
+            page=1,
+            make_id=make_id,
+            min_price=min_price,
+            max_price=max_price,
+            min_year=min_year,
+            max_year=max_year,
+        )
+        html = await self.fetch_page(url)
+
+        if not html:
+            return 0
+
+        soup = BeautifulSoup(html, "lxml")
+
+        # Son sayfa numarasini bul
+        pagination = soup.select('a[href*="page="]')
+        max_page = 1
+        for link in pagination:
+            href = link.get("href", "")
+            match = re.search(r"page=(\d+)", href)
+            if match:
+                page_num = int(match.group(1))
+                max_page = max(max_page, page_num)
+
+        return max_page
 
     async def fetch_page(self, url: str) -> Optional[str]:
         """Sayfa icerigini cek."""
@@ -122,9 +215,24 @@ class TurboAzScraper:
             "date": parts[1].strip() if len(parts) > 1 else None,
         }
 
-    async def parse_listing_page(self, page_num: int) -> List[Dict]:
-        """Liste sayfasindan araclari cek."""
-        url = f"{self.BASE_URL}/autos?page={page_num}"
+    async def parse_listing_page(
+        self,
+        page_num: int,
+        make_id: Optional[int] = None,
+        min_price: Optional[int] = None,
+        max_price: Optional[int] = None,
+        min_year: Optional[int] = None,
+        max_year: Optional[int] = None,
+    ) -> List[Dict]:
+        """Liste sayfasindan araclari cek (filtre destekli)."""
+        url = self.build_filter_url(
+            page=page_num,
+            make_id=make_id,
+            min_price=min_price,
+            max_price=max_price,
+            min_year=min_year,
+            max_year=max_year,
+        )
         html = await self.fetch_page(url)
 
         if not html:
@@ -208,11 +316,30 @@ class TurboAzScraper:
         self.total_scraped += 1
         return car
 
-    async def scrape_pages(self, start_page: int = 1, end_page: int = 10) -> List[Dict]:
-        """Belirtilen sayfa araligini scrape et."""
+    async def scrape_pages(
+        self,
+        start_page: int = 1,
+        end_page: int = 10,
+        make_id: Optional[int] = None,
+        min_price: Optional[int] = None,
+        max_price: Optional[int] = None,
+        min_year: Optional[int] = None,
+        max_year: Optional[int] = None,
+    ) -> List[Dict]:
+        """Belirtilen sayfa araligini scrape et (filtre destekli)."""
         print(f"Sayfa {start_page}-{end_page} taraniyor...")
 
-        tasks = [self.parse_listing_page(i) for i in range(start_page, end_page + 1)]
+        tasks = [
+            self.parse_listing_page(
+                i,
+                make_id=make_id,
+                min_price=min_price,
+                max_price=max_price,
+                min_year=min_year,
+                max_year=max_year,
+            )
+            for i in range(start_page, end_page + 1)
+        ]
         pages_results = await asyncio.gather(*tasks)
 
         all_cars: List[Dict] = []
@@ -265,6 +392,90 @@ class TurboAzScraper:
             print(f"Sure: {elapsed:.1f} saniye")
 
             return cars
+        finally:
+            await self.close_session()
+
+    async def run_filtered(
+        self,
+        make_id: Optional[int] = None,
+        min_price: Optional[int] = None,
+        max_price: Optional[int] = None,
+        min_year: Optional[int] = None,
+        max_year: Optional[int] = None,
+        max_pages: int = 50,
+        with_details: bool = True,
+    ) -> Dict:
+        """Filtrelenmiş scraping fonksiyonu."""
+        start_time = time.time()
+
+        filters = []
+        if make_id:
+            filters.append(f"make_id={make_id}")
+        if min_price:
+            filters.append(f"min_price={min_price}")
+        if max_price:
+            filters.append(f"max_price={max_price}")
+        if min_year:
+            filters.append(f"min_year={min_year}")
+        if max_year:
+            filters.append(f"max_year={max_year}")
+
+        print("Turbo.az Filtered Scraper baslatiliyor...")
+        print(f"Filtreler: {', '.join(filters) if filters else 'Yok'}")
+        print("-" * 40)
+
+        await self.create_session()
+
+        try:
+            # Toplam sayfa sayisini bul
+            total_pages = await self.get_total_pages(
+                make_id=make_id,
+                min_price=min_price,
+                max_price=max_price,
+                min_year=min_year,
+                max_year=max_year,
+            )
+
+            pages_to_scrape = min(total_pages, max_pages)
+            print(f"Toplam sayfa: {total_pages}, Taranacak: {pages_to_scrape}")
+
+            if pages_to_scrape == 0:
+                return {
+                    "cars": [],
+                    "total_pages": 0,
+                    "scraped_pages": 0,
+                    "total_cars": 0,
+                    "elapsed": 0,
+                }
+
+            # Sayfalari tara
+            cars = await self.scrape_pages(
+                start_page=1,
+                end_page=pages_to_scrape,
+                make_id=make_id,
+                min_price=min_price,
+                max_price=max_price,
+                min_year=min_year,
+                max_year=max_year,
+            )
+
+            if with_details and cars:
+                cars = await self.scrape_with_details(cars)
+
+            elapsed = time.time() - start_time
+            print("-" * 40)
+            print("Tamamlandi!")
+            print(f"Toplam arac: {len(cars)}")
+            print(f"Hatalar: {self.errors}")
+            print(f"Sure: {elapsed:.1f} saniye")
+
+            return {
+                "cars": cars,
+                "total_pages": total_pages,
+                "scraped_pages": pages_to_scrape,
+                "total_cars": len(cars),
+                "elapsed": round(elapsed, 1),
+            }
         finally:
             await self.close_session()
 
