@@ -60,8 +60,10 @@ from scheduler import (
 )
 from scraper import (
     TurboAzScraper,
+    FastTurboScraper,
     run_scraper_async,
     run_filtered_scraper_async,
+    run_scraper_fast_async,
     get_makes_async,
     get_models_async,
 )
@@ -302,6 +304,93 @@ async def trigger_filtered_scrape(
         "updated_cars": stats["updated_cars"],
         "price_changes": stats["price_changes"],
         "elapsed_seconds": result["elapsed"],
+    }
+
+
+@app.post("/api/scrape-fast")
+async def scrape_fast(
+    pages: int = Query(5, ge=1, le=100),
+    with_details: bool = True,
+    make_id: Optional[int] = None,
+    model_id: Optional[int] = None,
+    min_price: Optional[int] = None,
+    max_price: Optional[int] = None,
+    min_year: Optional[int] = None,
+    max_year: Optional[int] = None,
+):
+    """
+    Hızlı scraping (aiohttp) - VPN ile çalışır.
+    Cloudflare engellenirse hata döner.
+    """
+    import time as time_module
+
+    start_time = time_module.time()
+
+    # Test bağlantı
+    fast_scraper = FastTurboScraper()
+    if not await fast_scraper.test_connection():
+        await fast_scraper.close_session()
+        return {
+            "status": "error",
+            "error": "Cloudflare engeli - VPN kullanın veya /api/scrape-filtered endpoint'ini deneyin",
+        }
+    await fast_scraper.close_session()
+
+    # Hızlı scraping
+    cars = await run_scraper_fast_async(
+        pages=pages,
+        with_details=with_details,
+        make_id=make_id,
+        model_id=model_id,
+        min_price=min_price,
+        max_price=max_price,
+        min_year=min_year,
+        max_year=max_year,
+    )
+
+    elapsed = time_module.time() - start_time
+
+    # Filtreleri kaydet
+    filters = {
+        "make_id": make_id,
+        "model_id": model_id,
+        "min_price": min_price,
+        "max_price": max_price,
+        "min_year": min_year,
+        "max_year": max_year,
+        "pages": pages,
+        "mode": "fast",
+    }
+
+    # Session ile kaydet
+    stats = save_cars_batch_with_session(cars, filters=filters)
+
+    return {
+        "status": "completed",
+        "mode": "fast",
+        "session_id": stats["session_id"],
+        "total_scraped": stats["total"],
+        "new_cars": stats["new_cars"],
+        "updated_cars": stats["updated_cars"],
+        "price_changes": stats["price_changes"],
+        "elapsed_seconds": round(elapsed, 2),
+    }
+
+
+@app.get("/api/scraper/test")
+async def test_scraper_connection():
+    """
+    Hangi scraper modunun kullanılabilir olduğunu test et.
+    """
+    fast_scraper = FastTurboScraper()
+    fast_ok = await fast_scraper.test_connection()
+    await fast_scraper.close_session()
+
+    return {
+        "fast_mode": fast_ok,
+        "slow_mode": True,  # Chrome her zaman çalışır
+        "recommendation": "fast" if fast_ok else "slow",
+        "message": "VPN aktif - hızlı mod kullanılabilir" if fast_ok else "VPN yok - yavaş mod kullanılacak",
     }
 
 

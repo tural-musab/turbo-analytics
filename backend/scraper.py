@@ -1,6 +1,6 @@
 """
 Turbo.az Analytics - Web Scraper
-undetected-chromedriver ile Cloudflare bypass
+Hybrid: aiohttp (hızlı) + undetected-chromedriver (yavaş fallback)
 """
 
 import asyncio
@@ -10,11 +10,331 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple, Union
 
+import aiohttp
 import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+
+
+# ==================== FAST SCRAPER (aiohttp) ====================
+
+
+class FastTurboScraper:
+    """Hızlı aiohttp tabanlı scraper - VPN ile çalışır."""
+
+    BASE_URL = "https://turbo.az"
+    CONCURRENT_REQUESTS = 20
+    REQUEST_DELAY = 0.1
+
+    def __init__(self) -> None:
+        self.total_scraped = 0
+        self.errors = 0
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    def _get_headers(self) -> Dict[str, str]:
+        user_agents = [
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        ]
+        return {
+            "User-Agent": random.choice(user_agents),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
+        }
+
+    async def create_session(self) -> None:
+        """aiohttp session oluştur."""
+        if self._session is None:
+            connector = aiohttp.TCPConnector(limit=self.CONCURRENT_REQUESTS)
+            timeout = aiohttp.ClientTimeout(total=30)
+            self._session = aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout,
+                headers=self._get_headers(),
+            )
+
+    async def close_session(self) -> None:
+        """Session kapat."""
+        if self._session:
+            await self._session.close()
+            self._session = None
+
+    async def fetch_page(self, url: str) -> Optional[str]:
+        """Tek sayfa çek."""
+        if not self._session:
+            await self.create_session()
+
+        try:
+            await asyncio.sleep(self.REQUEST_DELAY)
+            async with self._session.get(url, headers=self._get_headers()) as response:
+                if response.status == 200:
+                    return await response.text()
+                elif response.status == 403:
+                    print(f"HTTP 403 (Cloudflare): {url}")
+                    return None
+                else:
+                    print(f"HTTP {response.status}: {url}")
+                    return None
+        except Exception as e:
+            self.errors += 1
+            print(f"Fast fetch error: {url} - {e}")
+            return None
+
+    async def test_connection(self) -> bool:
+        """Cloudflare'ı geçip geçemediğimizi test et."""
+        await self.create_session()
+        html = await self.fetch_page(f"{self.BASE_URL}/autos")
+        if html and "products-i" in html:
+            return True
+        return False
+
+    async def get_makes(self) -> List[Dict]:
+        """Marka listesini çek."""
+        await self.create_session()
+        html = await self.fetch_page(self.BASE_URL)
+        if not html:
+            return []
+
+        soup = BeautifulSoup(html, "lxml")
+        makes = []
+
+        select = soup.find("select", {"name": "q[make][]"})
+        if select:
+            for option in select.find_all("option"):
+                value = option.get("value")
+                if value:
+                    makes.append({
+                        "id": int(value),
+                        "name": option.text.strip(),
+                        "count": 0,
+                    })
+
+        return makes
+
+    async def get_models(self, make_id: int) -> List[Dict]:
+        """Model listesini çek."""
+        await self.create_session()
+        url = f"{self.BASE_URL}/autos?q%5Bmake%5D%5B%5D={make_id}"
+        html = await self.fetch_page(url)
+        if not html:
+            return []
+
+        soup = BeautifulSoup(html, "lxml")
+        models = []
+
+        select = soup.find("select", {"name": "q[model][]"})
+        if select:
+            for option in select.find_all("option"):
+                value = option.get("value")
+                if value:
+                    models.append({
+                        "id": int(value),
+                        "name": option.text.strip(),
+                        "count": 0,
+                    })
+
+        return models
+
+    def _parse_car_card(self, card) -> Optional[Dict]:
+        """Araç kartını parse et."""
+        try:
+            link = card.find("a", class_="products-i__link")
+            if not link:
+                return None
+
+            href = link.get("href", "")
+            turbo_id_match = re.search(r"/autos/(\d+)", href)
+            turbo_id = turbo_id_match.group(1) if turbo_id_match else None
+
+            name_elem = card.find("div", class_="products-i__name")
+            name = name_elem.text.strip() if name_elem else "Unknown"
+
+            price_elem = card.find("div", class_="products-i__price")
+            price_text = price_elem.text.strip() if price_elem else "0"
+            price_match = re.search(r"([\d\s]+)", price_text.replace(" ", ""))
+            price = int(price_match.group(1).replace(" ", "")) if price_match else 0
+
+            currency = "AZN"
+            if "$" in price_text or "USD" in price_text:
+                currency = "USD"
+            elif "€" in price_text or "EUR" in price_text:
+                currency = "EUR"
+
+            attrs = card.find("div", class_="products-i__attributes")
+            attrs_text = attrs.text.strip() if attrs else ""
+            attrs_parts = [p.strip() for p in attrs_text.split(",")]
+
+            year = None
+            engine = None
+            mileage = None
+
+            for part in attrs_parts:
+                if re.match(r"^\d{4}$", part):
+                    year = int(part)
+                elif "L" in part:
+                    engine = part
+                elif "km" in part.lower():
+                    km_match = re.search(r"([\d\s]+)", part.replace(" ", ""))
+                    if km_match:
+                        mileage = int(km_match.group(1).replace(" ", ""))
+
+            datetime_elem = card.find("div", class_="products-i__datetime")
+            city = ""
+            if datetime_elem:
+                city_elem = datetime_elem.find("span")
+                city = city_elem.text.strip() if city_elem else ""
+
+            brand = name.split()[0] if name else ""
+            model = " ".join(name.split()[1:]) if name and len(name.split()) > 1 else ""
+
+            is_vip = card.find("div", class_="products-i__vip") is not None
+            is_premium = card.find("div", class_="products-i__premium") is not None
+
+            return {
+                "turbo_id": turbo_id,
+                "url": f"{self.BASE_URL}{href}" if href else None,
+                "name": name,
+                "brand": brand,
+                "model": model,
+                "price": price,
+                "currency": currency,
+                "year": year,
+                "engine": engine,
+                "mileage": mileage,
+                "city": city,
+                "views": 0,
+                "is_new": mileage == 0 if mileage is not None else False,
+                "is_vip": is_vip,
+                "is_premium": is_premium,
+            }
+        except Exception as e:
+            print(f"Parse error: {e}")
+            return None
+
+    async def fetch_car_details(self, car: Dict) -> Dict:
+        """Araç detaylarını çek (views)."""
+        if not car.get("url"):
+            return car
+
+        html = await self.fetch_page(car["url"])
+        if not html:
+            return car
+
+        soup = BeautifulSoup(html, "lxml")
+
+        # Views
+        views_elem = soup.find("span", class_="product-statistics__views-count") or \
+                     soup.find("span", {"data-stat": "views"})
+        if views_elem:
+            views_match = re.search(r"([\d\s]+)", views_elem.text.replace(" ", ""))
+            if views_match:
+                car["views"] = int(views_match.group(1).replace(" ", ""))
+
+        self.total_scraped += 1
+        return car
+
+    async def scrape_page(self, url: str) -> List[Dict]:
+        """Tek sayfa araç listesi çek."""
+        html = await self.fetch_page(url)
+        if not html:
+            return []
+
+        soup = BeautifulSoup(html, "lxml")
+        cards = soup.find_all("div", class_="products-i")
+
+        cars = []
+        for card in cards:
+            car = self._parse_car_card(card)
+            if car:
+                cars.append(car)
+
+        return cars
+
+    async def run(
+        self,
+        pages: int = 5,
+        with_details: bool = True,
+        make_id: Optional[int] = None,
+        model_id: Optional[int] = None,
+        min_price: Optional[int] = None,
+        max_price: Optional[int] = None,
+        min_year: Optional[int] = None,
+        max_year: Optional[int] = None,
+    ) -> List[Dict]:
+        """Ana scraping fonksiyonu."""
+        await self.create_session()
+
+        # URL oluştur
+        base_url = f"{self.BASE_URL}/autos"
+        params = []
+        if make_id:
+            params.append(f"q%5Bmake%5D%5B%5D={make_id}")
+        if model_id:
+            params.append(f"q%5Bmodel%5D%5B%5D={model_id}")
+        if min_price:
+            params.append(f"q%5Bprice_from%5D={min_price}")
+        if max_price:
+            params.append(f"q%5Bprice_to%5D={max_price}")
+        if min_year:
+            params.append(f"q%5Byear_from%5D={min_year}")
+        if max_year:
+            params.append(f"q%5Byear_to%5D={max_year}")
+
+        query = "&".join(params) if params else ""
+
+        # Sayfa URL'leri oluştur
+        urls = []
+        for page in range(1, pages + 1):
+            if query:
+                urls.append(f"{base_url}?page={page}&{query}")
+            else:
+                urls.append(f"{base_url}?page={page}")
+
+        # Paralel olarak sayfaları çek
+        print(f"Fast scraper: {pages} sayfa çekiliyor...")
+        tasks = [self.scrape_page(url) for url in urls]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        all_cars = []
+        for i, result in enumerate(results):
+            if isinstance(result, list):
+                all_cars.extend(result)
+                print(f"Sayfa {i + 1}/{pages}: {len(result)} araç")
+            else:
+                print(f"Sayfa {i + 1}/{pages}: Hata - {result}")
+
+        print(f"Toplam {len(all_cars)} araç bulundu")
+
+        # Detayları çek
+        if with_details and all_cars:
+            print(f"{len(all_cars)} araç için detaylar çekiliyor...")
+            semaphore = asyncio.Semaphore(self.CONCURRENT_REQUESTS)
+
+            async def fetch_with_semaphore(car):
+                async with semaphore:
+                    return await self.fetch_car_details(car)
+
+            tasks = [fetch_with_semaphore(car) for car in all_cars]
+            all_cars = await asyncio.gather(*tasks)
+
+            # Progress
+            for i, _ in enumerate(all_cars):
+                if (i + 1) % 50 == 0:
+                    print(f"İlerleme: {i + 1}/{len(all_cars)} ({(i + 1) * 100 // len(all_cars)}%)")
+
+        await self.close_session()
+        return all_cars
 
 
 class TurboAzScraper:
@@ -594,8 +914,28 @@ async def run_filtered_scraper_async(
     return result
 
 
-async def get_makes_async(headless: bool = False) -> List[Dict]:
-    """Async wrapper for get_makes."""
+async def get_makes_async(headless: bool = False, force_slow: bool = False) -> List[Dict]:
+    """
+    Hybrid: Önce hızlı aiohttp dener, başarısız olursa yavaş Chrome'a düşer.
+    force_slow=True ile direkt Chrome kullanılır.
+    """
+    # Önce hızlı yöntemi dene (VPN ile çalışır)
+    if not force_slow:
+        try:
+            fast_scraper = FastTurboScraper()
+            if await fast_scraper.test_connection():
+                print("Fast scraper: Bağlantı başarılı, hızlı mod kullanılıyor")
+                result = await fast_scraper.get_makes()
+                await fast_scraper.close_session()
+                if result:
+                    return result
+            else:
+                print("Fast scraper: Cloudflare engeli, yavaş moda geçiliyor...")
+                await fast_scraper.close_session()
+        except Exception as e:
+            print(f"Fast scraper hatası: {e}, yavaş moda geçiliyor...")
+
+    # Yavaş yöntem (undetected-chromedriver)
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor() as pool:
         scraper = TurboAzScraper(headless=headless)
@@ -611,8 +951,28 @@ async def get_makes_async(headless: bool = False) -> List[Dict]:
     return result
 
 
-async def get_models_async(make_id: int, headless: bool = False) -> List[Dict]:
-    """Async wrapper for get_models."""
+async def get_models_async(make_id: int, headless: bool = False, force_slow: bool = False) -> List[Dict]:
+    """
+    Hybrid: Önce hızlı aiohttp dener, başarısız olursa yavaş Chrome'a düşer.
+    force_slow=True ile direkt Chrome kullanılır.
+    """
+    # Önce hızlı yöntemi dene
+    if not force_slow:
+        try:
+            fast_scraper = FastTurboScraper()
+            if await fast_scraper.test_connection():
+                print(f"Fast scraper: Model listesi çekiliyor (make_id={make_id})")
+                result = await fast_scraper.get_models(make_id)
+                await fast_scraper.close_session()
+                if result:
+                    return result
+            else:
+                print("Fast scraper: Cloudflare engeli, yavaş moda geçiliyor...")
+                await fast_scraper.close_session()
+        except Exception as e:
+            print(f"Fast scraper hatası: {e}, yavaş moda geçiliyor...")
+
+    # Yavaş yöntem
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor() as pool:
         scraper = TurboAzScraper(headless=headless)
@@ -626,6 +986,33 @@ async def get_models_async(make_id: int, headless: bool = False) -> List[Dict]:
 
         result = await loop.run_in_executor(pool, _get_models)
     return result
+
+
+async def run_scraper_fast_async(
+    pages: int = 5,
+    with_details: bool = True,
+    make_id: Optional[int] = None,
+    model_id: Optional[int] = None,
+    min_price: Optional[int] = None,
+    max_price: Optional[int] = None,
+    min_year: Optional[int] = None,
+    max_year: Optional[int] = None,
+) -> List[Dict]:
+    """Hızlı scraper (sadece VPN ile çalışır)."""
+    fast_scraper = FastTurboScraper()
+    try:
+        return await fast_scraper.run(
+            pages=pages,
+            with_details=with_details,
+            make_id=make_id,
+            model_id=model_id,
+            min_price=min_price,
+            max_price=max_price,
+            min_year=min_year,
+            max_year=max_year,
+        )
+    finally:
+        await fast_scraper.close_session()
 
 
 def main() -> None:
