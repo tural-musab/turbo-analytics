@@ -11,14 +11,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from database import (
+    clear_old_data,
     get_car_with_history,
     get_price_changes,
     get_price_history,
     get_scrape_sessions,
+    get_session_brands,
     get_session_cars,
     get_stats,
     get_top_viewed,
     init_database,
+    reset_database,
     save_cars_batch,
     save_cars_batch_with_session,
     search_cars,
@@ -268,6 +271,48 @@ async def list_session_cars(
 ):
     """Bir session'da cekilen araclari listele."""
     return get_session_cars(session_id, limit)
+
+
+@app.get("/api/scrape-sessions/{session_id}/brands")
+async def list_session_brands(session_id: int):
+    """Bir session'daki marka dagilimini getir."""
+    return get_session_brands(session_id)
+
+
+# ==================== VERI YONETIMI ENDPOINT'LERI ====================
+
+
+@app.post("/api/data/clear-old")
+async def clear_old_data_endpoint(
+    keep_days: int = Query(30, ge=1, le=365),
+):
+    """
+    Eski verileri temizle.
+    keep_days: Son X gun icinde guncellenmemis araclari sil.
+    """
+    result = clear_old_data(keep_days)
+    return {
+        "status": "completed",
+        "deleted_cars": result["deleted_cars"],
+        "deleted_sessions": result["deleted_sessions"],
+        "message": f"{result['deleted_cars']} eski arac silindi",
+    }
+
+
+@app.post("/api/data/reset")
+async def reset_data_endpoint(confirm: str = Query(..., pattern="^RESET$")):
+    """
+    TUM verileri sil (tam sifirlama).
+    confirm parametresi 'RESET' olmali.
+    """
+    result = reset_database()
+    return {
+        "status": "completed",
+        "deleted_cars": result["deleted_cars"],
+        "deleted_sessions": result["deleted_sessions"],
+        "deleted_history": result["deleted_history"],
+        "message": "Veritabani tamamen sifirlandi",
+    }
 
 
 # ==================== FIYAT GECMISI ENDPOINT'LERI ====================

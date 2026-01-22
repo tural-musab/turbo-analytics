@@ -633,6 +633,117 @@ def get_price_changes(days: int = 7, limit: int = 50) -> List[Dict]:
     return results
 
 
+def get_session_brands(session_id: int) -> List[Dict]:
+    """Bir session'daki marka dagilimini getir."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT c.brand, COUNT(*) as count
+        FROM cars c
+        INNER JOIN session_cars sc ON c.turbo_id = sc.turbo_id
+        WHERE sc.scrape_session_id = ?
+        GROUP BY c.brand
+        ORDER BY count DESC
+        """,
+        (session_id,),
+    )
+
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results
+
+
+def clear_old_data(keep_days: int = 30) -> Dict[str, int]:
+    """
+    Belirli gun sayisindan eski ve artik guncellenmeyen araclari temizle.
+    Fiyat gecmisi ve session kayitlari korunur.
+    Returns: {deleted_cars: int, deleted_sessions: int}
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Eski ve guncellenmemis araclari bul
+    cursor.execute(
+        """
+        SELECT COUNT(*) FROM cars
+        WHERE updated_at < datetime('now', '-' || ? || ' days')
+        """,
+        (keep_days,),
+    )
+    old_cars_count = cursor.fetchone()[0]
+
+    # Session-cars iliskilerini temizle (araclari silmeden once)
+    cursor.execute(
+        """
+        DELETE FROM session_cars
+        WHERE turbo_id IN (
+            SELECT turbo_id FROM cars
+            WHERE updated_at < datetime('now', '-' || ? || ' days')
+        )
+        """,
+        (keep_days,),
+    )
+
+    # Eski araclari sil
+    cursor.execute(
+        """
+        DELETE FROM cars
+        WHERE updated_at < datetime('now', '-' || ? || ' days')
+        """,
+        (keep_days,),
+    )
+
+    # Bos session'lari temizle (hic arac kalmamis olanlar)
+    cursor.execute(
+        """
+        DELETE FROM scrape_sessions
+        WHERE id NOT IN (SELECT DISTINCT scrape_session_id FROM session_cars)
+        AND id NOT IN (SELECT DISTINCT scrape_session_id FROM price_history WHERE scrape_session_id IS NOT NULL)
+        """
+    )
+    deleted_sessions = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+
+    return {"deleted_cars": old_cars_count, "deleted_sessions": deleted_sessions}
+
+
+def reset_database() -> Dict[str, int]:
+    """
+    Tum verileri temizle (tam sifirlama).
+    Returns: {deleted_cars, deleted_sessions, deleted_history}
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM cars")
+    cars_count = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM scrape_sessions")
+    sessions_count = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM price_history")
+    history_count = cursor.fetchone()[0]
+
+    cursor.execute("DELETE FROM session_cars")
+    cursor.execute("DELETE FROM price_history")
+    cursor.execute("DELETE FROM scrape_sessions")
+    cursor.execute("DELETE FROM cars")
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "deleted_cars": cars_count,
+        "deleted_sessions": sessions_count,
+        "deleted_history": history_count,
+    }
+
+
 if __name__ == "__main__":
     init_database()
     print("Veritabani hazir.")
