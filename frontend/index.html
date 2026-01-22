@@ -128,7 +128,10 @@
 
         const FilterPanel = ({ onScrapeComplete }) => {
             const [makes, setMakes] = useState([]);
+            const [models, setModels] = useState([]);
             const [selectedMake, setSelectedMake] = useState('');
+            const [selectedModel, setSelectedModel] = useState('');
+            const [modelsLoading, setModelsLoading] = useState(false);
             const [minPrice, setMinPrice] = useState('');
             const [maxPrice, setMaxPrice] = useState('');
             const [minYear, setMinYear] = useState('');
@@ -146,13 +149,32 @@
             }, []);
 
             useEffect(() => {
-                if (!selectedMake && !minPrice && !maxPrice && !minYear && !maxYear) {
+                setSelectedModel('');
+                setModels([]);
+                if (!selectedMake) return;
+
+                setModelsLoading(true);
+                fetch(API_URL + '/models/' + selectedMake)
+                    .then(res => res.json())
+                    .then(data => {
+                        setModels(data);
+                        setModelsLoading(false);
+                    })
+                    .catch(err => {
+                        console.error('Models fetch error:', err);
+                        setModelsLoading(false);
+                    });
+            }, [selectedMake]);
+
+            useEffect(() => {
+                if (!selectedMake && !selectedModel && !minPrice && !maxPrice && !minYear && !maxYear) {
                     setFilterInfo(null);
                     return;
                 }
 
                 const params = new URLSearchParams();
                 if (selectedMake) params.append('make_id', selectedMake);
+                if (selectedModel) params.append('model_id', selectedModel);
                 if (minPrice) params.append('min_price', minPrice);
                 if (maxPrice) params.append('max_price', maxPrice);
                 if (minYear) params.append('min_year', minYear);
@@ -162,7 +184,7 @@
                     .then(res => res.json())
                     .then(data => setFilterInfo(data))
                     .catch(err => console.error('Filter info error:', err));
-            }, [selectedMake, minPrice, maxPrice, minYear, maxYear]);
+            }, [selectedMake, selectedModel, minPrice, maxPrice, minYear, maxYear]);
 
             const handleFilteredScrape = async () => {
                 if (scraping) return;
@@ -170,6 +192,7 @@
 
                 const params = new URLSearchParams();
                 if (selectedMake) params.append('make_id', selectedMake);
+                if (selectedModel) params.append('model_id', selectedModel);
                 if (minPrice) params.append('min_price', minPrice);
                 if (maxPrice) params.append('max_price', maxPrice);
                 if (minYear) params.append('min_year', minYear);
@@ -189,6 +212,7 @@
             };
 
             const selectedMakeName = makes.find(m => m.id == selectedMake)?.name || 'Tum Markalar';
+            const selectedModelName = models.find(m => m.id == selectedModel)?.name || '';
 
             return (
                 <div className="glass rounded-2xl p-4 mb-6">
@@ -200,13 +224,14 @@
                             <span className="text-xl">🎯</span>
                             <span className="font-semibold">Filtrelenmiş Veri Cekimi</span>
                             {selectedMake && <span className="bg-blue-500 px-2 py-1 rounded text-sm">{selectedMakeName}</span>}
+                            {selectedModel && <span className="bg-green-500 px-2 py-1 rounded text-sm">{selectedModelName}</span>}
                         </div>
                         <span className="text-gray-400">{expanded ? '▲' : '▼'}</span>
                     </div>
 
                     {expanded && (
                         <div className="mt-4 space-y-4">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                                 <div>
                                     <label className="block text-sm text-gray-400 mb-1">Marka</label>
                                     <select
@@ -217,6 +242,20 @@
                                         <option value="">Tum Markalar</option>
                                         {makes.map(make => (
                                             <option key={make.id} value={make.id}>{make.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Model</label>
+                                    <select
+                                        value={selectedModel}
+                                        onChange={(e) => setSelectedModel(e.target.value)}
+                                        disabled={!selectedMake || modelsLoading}
+                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 disabled:opacity-50"
+                                    >
+                                        <option value="">{modelsLoading ? 'Yukleniyor...' : 'Tum Modeller'}</option>
+                                        {models.map(model => (
+                                            <option key={model.id} value={model.id}>{model.name} ({model.count})</option>
                                         ))}
                                     </select>
                                 </div>

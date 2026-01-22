@@ -85,10 +85,38 @@ class TurboAzScraper:
         self._makes_cache = makes
         return makes
 
+    async def get_models(self, make_id: int) -> List[Dict]:
+        """Belirli bir marka icin model listesini cek."""
+        url = f"{self.BASE_URL}/autos?q%5Bmake%5D%5B%5D={make_id}"
+        html = await self.fetch_page(url)
+
+        if not html:
+            return []
+
+        soup = BeautifulSoup(html, "lxml")
+        models: List[Dict] = []
+
+        select = soup.select_one('select[name="q[model][]"]')
+        if select:
+            for option in select.select(f'option.{make_id}[value]'):
+                value = option.get("value", "")
+                count = option.get("data-count", "0")
+                if value and value.isdigit():
+                    models.append({
+                        "id": int(value),
+                        "name": option.text.strip(),
+                        "count": int(count) if count.isdigit() else 0
+                    })
+
+        # Arac sayisina gore sirala
+        models.sort(key=lambda x: x["count"], reverse=True)
+        return models
+
     def build_filter_url(
         self,
         page: int = 1,
         make_id: Optional[int] = None,
+        model_id: Optional[int] = None,
         min_price: Optional[int] = None,
         max_price: Optional[int] = None,
         min_year: Optional[int] = None,
@@ -100,6 +128,8 @@ class TurboAzScraper:
 
         if make_id:
             params.append(("q[make][]", str(make_id)))
+        if model_id:
+            params.append(("q[model][]", str(model_id)))
         if min_price:
             params.append(("q[price_from]", str(min_price)))
         if max_price:
@@ -114,6 +144,7 @@ class TurboAzScraper:
     async def get_total_pages(
         self,
         make_id: Optional[int] = None,
+        model_id: Optional[int] = None,
         min_price: Optional[int] = None,
         max_price: Optional[int] = None,
         min_year: Optional[int] = None,
@@ -123,6 +154,7 @@ class TurboAzScraper:
         url = self.build_filter_url(
             page=1,
             make_id=make_id,
+            model_id=model_id,
             min_price=min_price,
             max_price=max_price,
             min_year=min_year,
@@ -219,6 +251,7 @@ class TurboAzScraper:
         self,
         page_num: int,
         make_id: Optional[int] = None,
+        model_id: Optional[int] = None,
         min_price: Optional[int] = None,
         max_price: Optional[int] = None,
         min_year: Optional[int] = None,
@@ -228,6 +261,7 @@ class TurboAzScraper:
         url = self.build_filter_url(
             page=page_num,
             make_id=make_id,
+            model_id=model_id,
             min_price=min_price,
             max_price=max_price,
             min_year=min_year,
@@ -321,6 +355,7 @@ class TurboAzScraper:
         start_page: int = 1,
         end_page: int = 10,
         make_id: Optional[int] = None,
+        model_id: Optional[int] = None,
         min_price: Optional[int] = None,
         max_price: Optional[int] = None,
         min_year: Optional[int] = None,
@@ -333,6 +368,7 @@ class TurboAzScraper:
             self.parse_listing_page(
                 i,
                 make_id=make_id,
+                model_id=model_id,
                 min_price=min_price,
                 max_price=max_price,
                 min_year=min_year,
@@ -398,6 +434,7 @@ class TurboAzScraper:
     async def run_filtered(
         self,
         make_id: Optional[int] = None,
+        model_id: Optional[int] = None,
         min_price: Optional[int] = None,
         max_price: Optional[int] = None,
         min_year: Optional[int] = None,
@@ -411,6 +448,8 @@ class TurboAzScraper:
         filters = []
         if make_id:
             filters.append(f"make_id={make_id}")
+        if model_id:
+            filters.append(f"model_id={model_id}")
         if min_price:
             filters.append(f"min_price={min_price}")
         if max_price:
@@ -430,6 +469,7 @@ class TurboAzScraper:
             # Toplam sayfa sayisini bul
             total_pages = await self.get_total_pages(
                 make_id=make_id,
+                model_id=model_id,
                 min_price=min_price,
                 max_price=max_price,
                 min_year=min_year,
@@ -453,6 +493,7 @@ class TurboAzScraper:
                 start_page=1,
                 end_page=pages_to_scrape,
                 make_id=make_id,
+                model_id=model_id,
                 min_price=min_price,
                 max_price=max_price,
                 min_year=min_year,

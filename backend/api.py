@@ -120,9 +120,22 @@ async def get_turbo_makes():
         await scraper.close_session()
 
 
+@app.get("/api/models/{make_id}")
+async def get_turbo_models(make_id: int):
+    """Belirli bir marka icin model listesi."""
+    scraper = TurboAzScraper()
+    await scraper.create_session()
+    try:
+        models = await scraper.get_models(make_id)
+        return models
+    finally:
+        await scraper.close_session()
+
+
 @app.get("/api/filter-info")
 async def get_filter_info(
     make_id: Optional[int] = None,
+    model_id: Optional[int] = None,
     min_price: Optional[int] = None,
     max_price: Optional[int] = None,
     min_year: Optional[int] = None,
@@ -134,6 +147,7 @@ async def get_filter_info(
     try:
         total_pages = await scraper.get_total_pages(
             make_id=make_id,
+            model_id=model_id,
             min_price=min_price,
             max_price=max_price,
             min_year=min_year,
@@ -150,6 +164,7 @@ async def get_filter_info(
 @app.post("/api/scrape-filtered")
 async def trigger_filtered_scrape(
     make_id: Optional[int] = None,
+    model_id: Optional[int] = None,
     min_price: Optional[int] = None,
     max_price: Optional[int] = None,
     min_year: Optional[int] = None,
@@ -161,6 +176,7 @@ async def trigger_filtered_scrape(
     scraper = TurboAzScraper()
     result = await scraper.run_filtered(
         make_id=make_id,
+        model_id=model_id,
         min_price=min_price,
         max_price=max_price,
         min_year=min_year,
