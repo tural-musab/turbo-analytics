@@ -120,7 +120,7 @@
                 if (maxPrice) params.append('max_price', maxPrice);
                 if (minYear) params.append('min_year', minYear);
                 if (maxYear) params.append('max_year', maxYear);
-                params.append('max_pages', maxPages);
+                params.append('max_pages', parseInt(maxPages, 10) || 20);
 
                 try {
                     const res = await fetch(API_URL + '/scrape-filtered?' + params.toString(), { method: 'POST' });
@@ -215,14 +215,27 @@
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-gray-400 mb-1">Max Sayfa</label>
+                            <label className="block text-sm text-gray-400 mb-1">Max Sayfa (1-100)</label>
                             <input
                                 type="number"
                                 value={maxPages}
-                                onChange={(e) => setMaxPages(e.target.value)}
+                                onChange={(e) => {
+                                    const val = parseInt(e.target.value, 10);
+                                    if (!isNaN(val) && val >= 1 && val <= 100) {
+                                        setMaxPages(val);
+                                    } else if (e.target.value === '') {
+                                        setMaxPages('');
+                                    }
+                                }}
+                                onBlur={(e) => {
+                                    if (!maxPages || maxPages < 1) setMaxPages(1);
+                                    if (maxPages > 100) setMaxPages(100);
+                                }}
                                 min="1"
                                 max="100"
-                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                                step="1"
+                                placeholder="1-100"
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                             />
                         </div>
                     </div>
