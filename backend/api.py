@@ -109,7 +109,7 @@ async def list_cars(
     max_price: Optional[int] = None,
     min_year: Optional[int] = None,
     sort_by: str = Query("views", pattern="^(views|price_asc|price_desc|year|newest)$"),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
 ):
     """Arac listesi ve filtreleme."""
     return search_cars(
