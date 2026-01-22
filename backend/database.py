@@ -64,6 +64,7 @@ def init_database() -> None:
         """
         CREATE TABLE IF NOT EXISTS scrape_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
             started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             finished_at TIMESTAMP,
             status TEXT DEFAULT 'running',
@@ -144,6 +145,23 @@ def init_database() -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_price ON cars(price)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_year ON cars(year)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_cached_models_make ON cached_models(make_id)")
+
+    # Migration: scrape_sessions tablosuna name kolonu ekle (eski veritabanlari icin)
+    cursor.execute("PRAGMA table_info(scrape_sessions)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "name" not in columns:
+        cursor.execute("ALTER TABLE scrape_sessions ADD COLUMN name TEXT")
+        # Mevcut session'lara isim ver
+        cursor.execute("SELECT id, filters_json FROM scrape_sessions WHERE name IS NULL")
+        sessions = cursor.fetchall()
+        for session_id, filters_json in sessions:
+            filters = json.loads(filters_json) if filters_json else None
+            # Basit isim olustur (cache'e erisemeyebiliriz)
+            if filters and filters.get("make_id"):
+                name = f"Session {session_id}"
+            else:
+                name = f"Session {session_id}"
+            cursor.execute("UPDATE scrape_sessions SET name = ? WHERE id = ?", (name, session_id))
 
     conn.commit()
     conn.close()
@@ -340,17 +358,95 @@ def search_cars(
 # ==================== SCRAPE SESSION FONKSIYONLARI ====================
 
 
-def create_scrape_session(filters: Optional[Dict] = None) -> int:
+def get_make_name_by_id(make_id: int) -> Optional[str]:
+    """Cache'den marka adini getir."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM cached_makes WHERE turbo_id = ?", (make_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+
+def get_model_name_by_id(model_id: int, make_id: int) -> Optional[str]:
+    """Cache'den model adini getir."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT name FROM cached_models WHERE turbo_id = ? AND make_id = ?",
+        (model_id, make_id)
+    )
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+
+def generate_session_name(filters: Optional[Dict] = None) -> str:
+    """Filtrelere gore session ismi olustur."""
+    if not filters:
+        return "Tum Araclar"
+
+    parts = []
+
+    # Marka
+    make_id = filters.get("make_id")
+    if make_id:
+        make_name = get_make_name_by_id(make_id)
+        if make_name:
+            parts.append(make_name)
+        else:
+            parts.append(f"Marka #{make_id}")
+
+        # Model
+        model_id = filters.get("model_id")
+        if model_id:
+            model_name = get_model_name_by_id(model_id, make_id)
+            if model_name:
+                parts.append(model_name)
+            else:
+                parts.append(f"Model #{model_id}")
+        else:
+            parts.append("Tum Modeller")
+    else:
+        parts.append("Tum Markalar")
+
+    # Fiyat araligi
+    min_price = filters.get("min_price")
+    max_price = filters.get("max_price")
+    if min_price or max_price:
+        if min_price and max_price:
+            parts.append(f"{min_price}-{max_price} AZN")
+        elif min_price:
+            parts.append(f"{min_price}+ AZN")
+        elif max_price:
+            parts.append(f"0-{max_price} AZN")
+
+    # Yil araligi
+    min_year = filters.get("min_year")
+    max_year = filters.get("max_year")
+    if min_year or max_year:
+        if min_year and max_year and min_year != max_year:
+            parts.append(f"{min_year}-{max_year}")
+        elif min_year:
+            parts.append(f"{min_year}+")
+
+    return " - ".join(parts) if parts else "Tum Araclar"
+
+
+def create_scrape_session(filters: Optional[Dict] = None, name: Optional[str] = None) -> int:
     """Yeni scrape session olustur ve ID dondur."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
+    # Isim belirtilmemisse otomatik olustur
+    session_name = name or generate_session_name(filters)
+
     cursor.execute(
         """
-        INSERT INTO scrape_sessions (started_at, status, filters_json)
-        VALUES (?, 'running', ?)
+        INSERT INTO scrape_sessions (name, started_at, status, filters_json)
+        VALUES (?, ?, 'running', ?)
         """,
-        (datetime.now().isoformat(), json.dumps(filters) if filters else None),
+        (session_name, datetime.now().isoformat(), json.dumps(filters) if filters else None),
     )
 
     session_id = cursor.lastrowid

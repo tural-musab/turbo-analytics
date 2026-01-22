@@ -176,6 +176,7 @@ async def get_turbo_makes(refresh: bool = False):
     if not refresh and is_cache_valid("makes", max_age_hours=24):
         cached = get_cached_makes()
         if cached:
+            print(f"Cache'den okundu: {len(cached)} marka")
             return cached
 
     # Cache gecersiz veya bos - turbo.az'dan cek
@@ -202,6 +203,7 @@ async def get_turbo_models(make_id: int, refresh: bool = False):
     if not refresh and is_cache_valid("models", make_id=make_id, max_age_hours=24):
         cached = get_cached_models(make_id)
         if cached:
+            print(f"Cache'den okundu: {len(cached)} model (make_id={make_id})")
             return cached
 
     # Cache gecersiz veya bos - turbo.az'dan cek
@@ -227,33 +229,58 @@ async def get_filter_info(
     min_year: Optional[int] = None,
     max_year: Optional[int] = None,
 ):
-    """Filtreye gore toplam sayfa ve tahmini arac sayisi."""
+    """
+    Filtreye gore toplam sayfa ve tahmini arac sayisi.
+    Hybrid mod: Önce hızlı mod dener, bloklanırsa yavaş moda geçer.
+    """
     from concurrent.futures import ThreadPoolExecutor
     import asyncio
 
-    loop = asyncio.get_event_loop()
-    with ThreadPoolExecutor() as pool:
-        scraper = TurboAzScraper()
+    mode_used = "fast"
 
-        def _get_total_pages():
-            scraper.create_session()
-            try:
-                return scraper.get_total_pages(
-                    make_id=make_id,
-                    model_id=model_id,
-                    min_price=min_price,
-                    max_price=max_price,
-                    min_year=min_year,
-                    max_year=max_year,
-                )
-            finally:
-                scraper.close_session()
+    # Önce hızlı mod dene
+    fast_scraper = FastTurboScraper()
+    fast_available = await fast_scraper.test_connection()
 
-        total_pages = await loop.run_in_executor(pool, _get_total_pages)
+    if fast_available:
+        total_pages = await fast_scraper.get_total_pages(
+            make_id=make_id,
+            model_id=model_id,
+            min_price=min_price,
+            max_price=max_price,
+            min_year=min_year,
+            max_year=max_year,
+        )
+        await fast_scraper.close_session()
+    else:
+        await fast_scraper.close_session()
+        mode_used = "slow"
+
+        # Yavaş mod (Chrome)
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as pool:
+            scraper = TurboAzScraper()
+
+            def _get_total_pages():
+                scraper.create_session()
+                try:
+                    return scraper.get_total_pages(
+                        make_id=make_id,
+                        model_id=model_id,
+                        min_price=min_price,
+                        max_price=max_price,
+                        min_year=min_year,
+                        max_year=max_year,
+                    )
+                finally:
+                    scraper.close_session()
+
+            total_pages = await loop.run_in_executor(pool, _get_total_pages)
 
     return {
         "total_pages": total_pages,
         "estimated_cars": total_pages * 36,
+        "mode": mode_used,
     }
 
 
@@ -268,17 +295,71 @@ async def trigger_filtered_scrape(
     max_pages: int = Query(50, ge=1, le=500),
     with_details: bool = True,
 ):
-    """Filtrelenmiş scraping tetikle (session takipli)."""
-    result = await run_filtered_scraper_async(
-        make_id=make_id,
-        model_id=model_id,
-        min_price=min_price,
-        max_price=max_price,
-        min_year=min_year,
-        max_year=max_year,
-        max_pages=max_pages,
-        with_details=with_details,
-    )
+    """
+    Filtrelenmiş scraping tetikle (session takipli).
+    Hybrid mod: Önce hızlı mod (aiohttp) dener, bloklanırsa yavaş moda (Chrome) geçer.
+    """
+    import time as time_module
+
+    start_time = time_module.time()
+    mode_used = "fast"
+
+    # Önce hızlı mod dene
+    fast_scraper = FastTurboScraper()
+    fast_available = await fast_scraper.test_connection()
+
+    if fast_available:
+        print("Hybrid: Hızlı mod kullanılıyor (aiohttp)")
+
+        # Toplam sayfa sayısını al
+        total_pages = await fast_scraper.get_total_pages(
+            make_id=make_id,
+            model_id=model_id,
+            min_price=min_price,
+            max_price=max_price,
+            min_year=min_year,
+            max_year=max_year,
+        )
+
+        pages_to_scrape = min(total_pages, max_pages)
+
+        # Hızlı scraping
+        cars = await fast_scraper.run(
+            pages=pages_to_scrape,
+            with_details=with_details,
+            make_id=make_id,
+            model_id=model_id,
+            min_price=min_price,
+            max_price=max_price,
+            min_year=min_year,
+            max_year=max_year,
+        )
+
+        await fast_scraper.close_session()
+
+        result = {
+            "cars": cars,
+            "total_pages": total_pages,
+            "scraped_pages": pages_to_scrape,
+        }
+    else:
+        print("Hybrid: Hızlı mod bloklandı, yavaş moda geçiliyor (Chrome)")
+        await fast_scraper.close_session()
+        mode_used = "slow"
+
+        # Yavaş mod (Chrome)
+        result = await run_filtered_scraper_async(
+            make_id=make_id,
+            model_id=model_id,
+            min_price=min_price,
+            max_price=max_price,
+            min_year=min_year,
+            max_year=max_year,
+            max_pages=max_pages,
+            with_details=with_details,
+        )
+
+    elapsed = time_module.time() - start_time
 
     # Filtreleri kaydet
     filters = {
@@ -289,6 +370,7 @@ async def trigger_filtered_scrape(
         "min_year": min_year,
         "max_year": max_year,
         "max_pages": max_pages,
+        "mode": mode_used,
     }
 
     # Session ile kaydet
@@ -296,6 +378,7 @@ async def trigger_filtered_scrape(
 
     return {
         "status": "completed",
+        "mode": mode_used,
         "session_id": stats["session_id"],
         "total_pages": result["total_pages"],
         "scraped_pages": result["scraped_pages"],
@@ -303,7 +386,7 @@ async def trigger_filtered_scrape(
         "new_cars": stats["new_cars"],
         "updated_cars": stats["updated_cars"],
         "price_changes": stats["price_changes"],
-        "elapsed_seconds": result["elapsed"],
+        "elapsed_seconds": round(elapsed, 2),
     }
 
 

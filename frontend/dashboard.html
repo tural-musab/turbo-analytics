@@ -162,7 +162,7 @@
                             >
                                 <option value="">Tum Veriler</option>
                                 {sessions.map(s => (
-                                    <option key={s.id} value={s.id}>Session {s.id} ({s.total_cars} arac)</option>
+                                    <option key={s.id} value={s.id}>{s.name || `Session ${s.id}`} ({s.total_cars} arac)</option>
                                 ))}
                             </select>
                         </div>
@@ -520,7 +520,7 @@
                     <div className="flex justify-between items-center mb-4">
                         <h2 className="text-xl font-bold">
                             Araclar ({displayedCars.length} / {allCars.length})
-                            {filters.sessionId && <span className="text-sm font-normal text-gray-400 ml-2">Session {filters.sessionId}</span>}
+                            {filters.sessionId && <span className="text-sm font-normal text-gray-400 ml-2">{sessions.find(s => s.id == filters.sessionId)?.name || `Session ${filters.sessionId}`}</span>}
                         </h2>
                     </div>
 

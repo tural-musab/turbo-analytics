@@ -112,8 +112,9 @@ class FastTurboScraper:
         select = soup.find("select", {"name": "q[make][]"})
         if select:
             for option in select.find_all("option"):
-                value = option.get("value")
-                if value:
+                value = option.get("value", "")
+                # Sadece numeric value'ları kabul et
+                if value and value.isdigit():
                     makes.append({
                         "id": int(value),
                         "name": option.text.strip(),
@@ -135,16 +136,95 @@ class FastTurboScraper:
 
         select = soup.find("select", {"name": "q[model][]"})
         if select:
+            make_id_str = str(make_id)
             for option in select.find_all("option"):
-                value = option.get("value")
-                if value:
+                # Sadece bu markaya ait modelleri al (class kontrolü)
+                classes = option.get("class", [])
+                if make_id_str not in classes:
+                    continue
+
+                value = option.get("value", "")
+                count = option.get("data-count", "0")
+
+                # Sadece numeric value'ları kabul et
+                if value and value.isdigit():
                     models.append({
                         "id": int(value),
                         "name": option.text.strip(),
-                        "count": 0,
+                        "count": int(count) if count.isdigit() else 0,
                     })
 
+        # Count'a göre sırala
+        models.sort(key=lambda x: x["count"], reverse=True)
         return models
+
+    def _build_filter_url(
+        self,
+        page: int = 1,
+        make_id: Optional[int] = None,
+        model_id: Optional[int] = None,
+        min_price: Optional[int] = None,
+        max_price: Optional[int] = None,
+        min_year: Optional[int] = None,
+        max_year: Optional[int] = None,
+    ) -> str:
+        """Filtreye göre URL oluştur."""
+        base_url = f"{self.BASE_URL}/autos"
+        params = [f"page={page}"]
+
+        if make_id:
+            params.append(f"q%5Bmake%5D%5B%5D={make_id}")
+        if model_id:
+            params.append(f"q%5Bmodel%5D%5B%5D={model_id}")
+        if min_price:
+            params.append(f"q%5Bprice_from%5D={min_price}")
+        if max_price:
+            params.append(f"q%5Bprice_to%5D={max_price}")
+        if min_year:
+            params.append(f"q%5Byear_from%5D={min_year}")
+        if max_year:
+            params.append(f"q%5Byear_to%5D={max_year}")
+
+        return f"{base_url}?{'&'.join(params)}"
+
+    async def get_total_pages(
+        self,
+        make_id: Optional[int] = None,
+        model_id: Optional[int] = None,
+        min_price: Optional[int] = None,
+        max_price: Optional[int] = None,
+        min_year: Optional[int] = None,
+        max_year: Optional[int] = None,
+    ) -> int:
+        """Filtreye göre toplam sayfa sayısını bul."""
+        await self.create_session()
+
+        url = self._build_filter_url(
+            page=1,
+            make_id=make_id,
+            model_id=model_id,
+            min_price=min_price,
+            max_price=max_price,
+            min_year=min_year,
+            max_year=max_year,
+        )
+        html = await self.fetch_page(url)
+
+        if not html:
+            return 0
+
+        soup = BeautifulSoup(html, "lxml")
+
+        pagination = soup.select('a[href*="page="]')
+        max_page = 1
+        for link in pagination:
+            href = link.get("href", "")
+            match = re.search(r"page=(\d+)", href)
+            if match:
+                page_num = int(match.group(1))
+                max_page = max(max_page, page_num)
+
+        return max_page
 
     def _parse_car_card(self, card) -> Optional[Dict]:
         """Araç kartını parse et."""
@@ -233,13 +313,11 @@ class FastTurboScraper:
 
         soup = BeautifulSoup(html, "lxml")
 
-        # Views
-        views_elem = soup.find("span", class_="product-statistics__views-count") or \
-                     soup.find("span", {"data-stat": "views"})
-        if views_elem:
-            views_match = re.search(r"([\d\s]+)", views_elem.text.replace(" ", ""))
-            if views_match:
-                car["views"] = int(views_match.group(1).replace(" ", ""))
+        # Views - Azerbaycanca "Baxışların sayı" ifadesini ara
+        text = soup.get_text()
+        views_match = re.search(r"Baxışların sayı[:\s]*(\d[\d\s]*)", text)
+        if views_match:
+            car["views"] = int(views_match.group(1).replace(" ", ""))
 
         self.total_scraped += 1
         return car
