@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Turbo.az Analytics - Veri Cekimi</title>
+
+    <!-- React -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="text-white">
+    <div id="root"></div>
+
+    <script type="text/babel" data-presets="react">
+        const { useState, useEffect } = React;
+
+        const API_URL = 'http://localhost:8000/api';
+
+        const formatNumber = (num) => {
+            if (!num) return '0';
+            return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        };
+
+        const formatDate = (dateStr) => {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleString('az-AZ');
+        };
+
+        // Navigation Component
+        const Navigation = () => (
+            <nav className="glass mb-6 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                    <a href="index.html" className="text-xl font-bold hover:text-blue-400">Turbo.az Analytics</a>
+                    <div className="flex gap-4">
+                        <a href="scraper.html" className="px-4 py-2 rounded-lg bg-blue-500">Veri Cekimi</a>
+                        <a href="dashboard.html" className="px-4 py-2 rounded-lg hover:bg-gray-700">Dashboard</a>
+                    </div>
+                </div>
+            </nav>
+        );
+
+        // Filtered Scrape Panel
+        const FilteredScrapePanel = ({ onScrapeComplete }) => {
+            const [makes, setMakes] = useState([]);
+            const [models, setModels] = useState([]);
+            const [selectedMake, setSelectedMake] = useState('');
+            const [selectedModel, setSelectedModel] = useState('');
+            const [modelsLoading, setModelsLoading] = useState(false);
+            const [minPrice, setMinPrice] = useState('');
+            const [maxPrice, setMaxPrice] = useState('');
+            const [minYear, setMinYear] = useState('');
+            const [maxYear, setMaxYear] = useState('');
+            const [maxPages, setMaxPages] = useState(20);
+            const [filterInfo, setFilterInfo] = useState(null);
+            const [scraping, setScraping] = useState(false);
+            const [lastResult, setLastResult] = useState(null);
+
+            useEffect(() => {
+                fetch(API_URL + '/makes')
+                    .then(res => res.json())
+                    .then(data => setMakes(data))
+                    .catch(err => console.error('Makes fetch error:', err));
+            }, []);
+
+            useEffect(() => {
+                setSelectedModel('');
+                setModels([]);
+                if (!selectedMake) return;
+
+                setModelsLoading(true);
+                fetch(API_URL + '/models/' + selectedMake)
+                    .then(res => res.json())
+                    .then(data => {
+                        setModels(data);
+                        setModelsLoading(false);
+                    })
+                    .catch(err => {
+                        console.error('Models fetch error:', err);
+                        setModelsLoading(false);
+                    });
+            }, [selectedMake]);
+
+            useEffect(() => {
+                if (!selectedMake && !selectedModel && !minPrice && !maxPrice && !minYear && !maxYear) {
+                    setFilterInfo(null);
+                    return;
+                }
+
+                const params = new URLSearchParams();
+                if (selectedMake) params.append('make_id', selectedMake);
+                if (selectedModel) params.append('model_id', selectedModel);
+                if (minPrice) params.append('min_price', minPrice);
+                if (maxPrice) params.append('max_price', maxPrice);
+                if (minYear) params.append('min_year', minYear);
+                if (maxYear) params.append('max_year', maxYear);
+
+                fetch(API_URL + '/filter-info?' + params.toString())
+                    .then(res => res.json())
+                    .then(data => setFilterInfo(data))
+                    .catch(err => console.error('Filter info error:', err));
+            }, [selectedMake, selectedModel, minPrice, maxPrice, minYear, maxYear]);
+
+            const handleFilteredScrape = async () => {
+                if (scraping) return;
+                setScraping(true);
+                setLastResult(null);
+
+                const params = new URLSearchParams();
+                if (selectedMake) params.append('make_id', selectedMake);
+                if (selectedModel) params.append('model_id', selectedModel);
+                if (minPrice) params.append('min_price', minPrice);
+                if (maxPrice) params.append('max_price', maxPrice);
+                if (minYear) params.append('min_year', minYear);
+                if (maxYear) params.append('max_year', maxYear);
+                params.append('max_pages', maxPages);
+
+                try {
+                    const res = await fetch(API_URL + '/scrape-filtered?' + params.toString(), { method: 'POST' });
+                    const data = await res.json();
+                    setLastResult(data);
+                    if (onScrapeComplete) onScrapeComplete();
+                } catch (err) {
+                    setLastResult({ error: 'Scraping basarisiz!' });
+                } finally {
+                    setScraping(false);
+                }
+            };
+
+            const selectedMakeName = makes.find(m => m.id == selectedMake)?.name || '';
+            const selectedModelName = models.find(m => m.id == selectedModel)?.name || '';
+
+            return (
+                <div className="glass rounded-2xl p-6 mb-6">
+                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                        <span>🎯</span> Filtrelenmiş Veri Cekimi
+                    </h2>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Marka</label>
+                            <select
+                                value={selectedMake}
+                                onChange={(e) => setSelectedMake(e.target.value)}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                            >
+                                <option value="">Tum Markalar</option>
+                                {makes.map(make => (
+                                    <option key={make.id} value={make.id}>{make.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Model</label>
+                            <select
+                                value={selectedModel}
+                                onChange={(e) => setSelectedModel(e.target.value)}
+                                disabled={!selectedMake || modelsLoading}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 disabled:opacity-50"
+                            >
+                                <option value="">{modelsLoading ? 'Yukleniyor...' : 'Tum Modeller'}</option>
+                                {models.map(model => (
+                                    <option key={model.id} value={model.id}>{model.name} ({model.count})</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Min Fiyat (AZN)</label>
+                            <input
+                                type="number"
+                                value={minPrice}
+                                onChange={(e) => setMinPrice(e.target.value)}
+                                placeholder="0"
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Max Fiyat (AZN)</label>
+                            <input
+                                type="number"
+                                value={maxPrice}
+                                onChange={(e) => setMaxPrice(e.target.value)}
+                                placeholder="999999"
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Min Yil</label>
+                            <input
+                                type="number"
+                                value={minYear}
+                                onChange={(e) => setMinYear(e.target.value)}
+                                placeholder="2000"
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Max Yil</label>
+                            <input
+                                type="number"
+                                value={maxYear}
+                                onChange={(e) => setMaxYear(e.target.value)}
+                                placeholder="2025"
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Max Sayfa</label>
+                            <input
+                                type="number"
+                                value={maxPages}
+                                onChange={(e) => setMaxPages(e.target.value)}
+                                min="1"
+                                max="100"
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                            />
+                        </div>
+                    </div>
+
+                    {filterInfo && (
+                        <div className="bg-gray-800 rounded-lg p-3 flex items-center justify-between mb-4">
+                            <div className="text-sm">
+                                <span className="text-gray-400">Toplam: </span>
+                                <span className="font-semibold">{filterInfo.total_pages} sayfa</span>
+                                <span className="text-gray-400 mx-2">|</span>
+                                <span className="text-gray-400">~</span>
+                                <span className="font-semibold">{formatNumber(filterInfo.estimated_cars)} arac</span>
+                            </div>
+                            <div className="text-sm text-gray-400">
+                                Cekilecek: {Math.min(filterInfo.total_pages, maxPages)} sayfa
+                            </div>
+                        </div>
+                    )}
+
+                    <button
+                        onClick={handleFilteredScrape}
+                        disabled={scraping}
+                        className={'w-full py-3 rounded-xl font-semibold transition-colors ' + (scraping ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600')}
+                    >
+                        {scraping ? 'Veriler Cekiliyor...' : '🚀 Filtrelenmiş Verileri Cek'}
+                    </button>
+
+                    {lastResult && (
+                        <div className={'mt-4 p-4 rounded-lg ' + (lastResult.error ? 'bg-red-900/50' : 'bg-green-900/50')}>
+                            {lastResult.error ? (
+                                <p className="text-red-400">{lastResult.error}</p>
+                            ) : (
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                                    <div>
+                                        <p className="text-gray-400 text-sm">Toplam Cekilen</p>
+                                        <p className="text-2xl font-bold">{lastResult.total_scraped}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-400 text-sm">Yeni Arac</p>
+                                        <p className="text-2xl font-bold text-green-400">{lastResult.new_cars}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-400 text-sm">Fiyat Degisimi</p>
+                                        <p className="text-2xl font-bold text-yellow-400">{lastResult.price_changes}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-400 text-sm">Sure</p>
+                                        <p className="text-2xl font-bold">{lastResult.elapsed_seconds?.toFixed(1)}s</p>
+                                    </div>
+                                </div>
+                            )}
+                            {lastResult.session_id && (
+                                <div className="mt-3 pt-3 border-t border-gray-700 flex justify-between items-center">
+                                    <span className="text-sm text-gray-400">Session ID: {lastResult.session_id}</span>
+                                    <a
+                                        href={'dashboard.html?session=' + lastResult.session_id}
+                                        className="text-blue-400 hover:text-blue-300 text-sm"
+                                    >
+                                        Cekilen verileri gor →
+                                    </a>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // Scrape Sessions List
+        const ScrapeSessionsList = () => {
+            const [sessions, setSessions] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            const fetchSessions = () => {
+                fetch(API_URL + '/scrape-sessions?limit=10')
+                    .then(res => res.json())
+                    .then(data => {
+                        setSessions(data);
+                        setLoading(false);
+                    })
+                    .catch(err => {
+                        console.error('Sessions fetch error:', err);
+                        setLoading(false);
+                    });
+            };
+
+            useEffect(() => {
+                fetchSessions();
+            }, []);
+
+            if (loading) {
+                return <div className="glass rounded-2xl p-6"><p className="text-gray-400 text-center">Yukleniyor...</p></div>;
+            }
+
+            return (
+                <div className="glass rounded-2xl p-6 mb-6">
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-xl font-bold flex items-center gap-2">
+                            <span>📋</span> Son Scrape Islemleri
+                        </h2>
+                        <button onClick={fetchSessions} className="text-blue-400 hover:text-blue-300 text-sm">Yenile</button>
+                    </div>
+
+                    {sessions.length === 0 ? (
+                        <p className="text-gray-400 text-center py-4">Henuz veri cekilmemis.</p>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="text-gray-400 text-left">
+                                        <th className="pb-3">ID</th>
+                                        <th className="pb-3">Tarih</th>
+                                        <th className="pb-3">Durum</th>
+                                        <th className="pb-3">Toplam</th>
+                                        <th className="pb-3">Yeni</th>
+                                        <th className="pb-3">Fiyat Deg.</th>
+                                        <th className="pb-3">Islem</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {sessions.map(session => (
+                                        <tr key={session.id} className="border-t border-gray-700">
+                                            <td className="py-3">{session.id}</td>
+                                            <td className="py-3">{formatDate(session.started_at)}</td>
+                                            <td className="py-3">
+                                                <span className={'px-2 py-1 rounded text-xs ' + (session.status === 'completed' ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300')}>
+                                                    {session.status}
+                                                </span>
+                                            </td>
+                                            <td className="py-3">{session.total_cars}</td>
+                                            <td className="py-3 text-green-400">{session.new_cars}</td>
+                                            <td className="py-3 text-yellow-400">{session.price_changes}</td>
+                                            <td className="py-3">
+                                                <a href={'dashboard.html?session=' + session.id} className="text-blue-400 hover:text-blue-300">Gor</a>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // Schedule Manager
+        const ScheduleManager = () => {
+            const [schedules, setSchedules] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [showCreate, setShowCreate] = useState(false);
+            const [creating, setCreating] = useState(false);
+            const [makes, setMakes] = useState([]);
+
+            // Form state
+            const [formName, setFormName] = useState('');
+            const [formType, setFormType] = useState('daily');
+            const [formTime, setFormTime] = useState('09:00');
+            const [formMake, setFormMake] = useState('');
+            const [formMaxPages, setFormMaxPages] = useState(50);
+
+            const fetchSchedules = () => {
+                fetch(API_URL + '/schedules')
+                    .then(res => res.json())
+                    .then(data => {
+                        setSchedules(data);
+                        setLoading(false);
+                    })
+                    .catch(err => {
+                        console.error('Schedules fetch error:', err);
+                        setLoading(false);
+                    });
+            };
+
+            useEffect(() => {
+                fetchSchedules();
+                fetch(API_URL + '/makes')
+                    .then(res => res.json())
+                    .then(data => setMakes(data))
+                    .catch(console.error);
+            }, []);
+
+            const handleCreate = async () => {
+                if (!formName || creating) return;
+                setCreating(true);
+
+                const params = new URLSearchParams();
+                params.append('name', formName);
+                params.append('schedule_type', formType);
+                params.append('schedule_time', formTime);
+                params.append('max_pages', formMaxPages);
+                if (formMake) params.append('make_id', formMake);
+
+                try {
+                    const res = await fetch(API_URL + '/schedules?' + params.toString(), { method: 'POST' });
+                    if (res.ok) {
+                        setShowCreate(false);
+                        setFormName('');
+                        fetchSchedules();
+                    }
+                } catch (err) {
+                    console.error('Create schedule error:', err);
+                } finally {
+                    setCreating(false);
+                }
+            };
+
+            const handleDelete = async (jobId) => {
+                if (!confirm('Bu zamanli isi silmek istediginize emin misiniz?')) return;
+
+                try {
+                    await fetch(API_URL + '/schedules/' + jobId, { method: 'DELETE' });
+                    fetchSchedules();
+                } catch (err) {
+                    console.error('Delete schedule error:', err);
+                }
+            };
+
+            const handleToggle = async (jobId, isActive) => {
+                try {
+                    await fetch(API_URL + '/schedules/' + jobId + '/toggle?is_active=' + isActive, { method: 'POST' });
+                    fetchSchedules();
+                } catch (err) {
+                    console.error('Toggle schedule error:', err);
+                }
+            };
+
+            const handleRunNow = async (jobId) => {
+                try {
+                    await fetch(API_URL + '/schedules/' + jobId + '/run', { method: 'POST' });
+                    alert('Is baslatildi!');
+                } catch (err) {
+                    console.error('Run now error:', err);
+                }
+            };
+
+            if (loading) {
+                return <div className="glass rounded-2xl p-6"><p className="text-gray-400 text-center">Yukleniyor...</p></div>;
+            }
+
+            return (
+                <div className="glass rounded-2xl p-6">
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-xl font-bold flex items-center gap-2">
+                            <span>⏰</span> Zamanli Isler
+                        </h2>
+                        <button
+                            onClick={() => setShowCreate(!showCreate)}
+                            className="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-sm"
+                        >
+                            {showCreate ? 'Iptal' : '+ Yeni Is'}
+                        </button>
+                    </div>
+
+                    {showCreate && (
+                        <div className="bg-gray-800 rounded-lg p-4 mb-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Is Adi *</label>
+                                    <input
+                                        type="text"
+                                        value={formName}
+                                        onChange={(e) => setFormName(e.target.value)}
+                                        placeholder="Gunluk BMW Tarama"
+                                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Zamanlama</label>
+                                    <select
+                                        value={formType}
+                                        onChange={(e) => setFormType(e.target.value)}
+                                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2"
+                                    >
+                                        <option value="hourly">Saatlik</option>
+                                        <option value="daily">Gunluk</option>
+                                        <option value="weekly">Haftalik</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Saat</label>
+                                    <input
+                                        type="time"
+                                        value={formTime}
+                                        onChange={(e) => setFormTime(e.target.value)}
+                                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Marka (opsiyonel)</label>
+                                    <select
+                                        value={formMake}
+                                        onChange={(e) => setFormMake(e.target.value)}
+                                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2"
+                                    >
+                                        <option value="">Tum Markalar</option>
+                                        {makes.map(make => (
+                                            <option key={make.id} value={make.id}>{make.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-gray-400 mb-1">Max Sayfa</label>
+                                    <input
+                                        type="number"
+                                        value={formMaxPages}
+                                        onChange={(e) => setFormMaxPages(e.target.value)}
+                                        min="1"
+                                        max="100"
+                                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2"
+                                    />
+                                </div>
+                            </div>
+                            <button
+                                onClick={handleCreate}
+                                disabled={!formName || creating}
+                                className="px-6 py-2 rounded-lg bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {creating ? 'Olusturuluyor...' : 'Olustur'}
+                            </button>
+                        </div>
+                    )}
+
+                    {schedules.length === 0 ? (
+                        <p className="text-gray-400 text-center py-4">Henuz zamanli is yok.</p>
+                    ) : (
+                        <div className="space-y-3">
+                            {schedules.map(schedule => (
+                                <div key={schedule.id} className="bg-gray-800 rounded-lg p-4 flex items-center justify-between">
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <span className={'w-2 h-2 rounded-full ' + (schedule.is_active ? 'bg-green-500' : 'bg-gray-500')}></span>
+                                            <span className="font-semibold">{schedule.name}</span>
+                                            <span className="text-gray-400 text-sm">({schedule.schedule_type} @ {schedule.schedule_time})</span>
+                                        </div>
+                                        <div className="text-sm text-gray-400 mt-1">
+                                            Sonraki: {schedule.next_run ? formatDate(schedule.next_run) : '-'}
+                                            {schedule.last_run && <span className="ml-4">Son: {formatDate(schedule.last_run)}</span>}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => handleRunNow(schedule.id)}
+                                            className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-sm"
+                                        >
+                                            Simdi Calistir
+                                        </button>
+                                        <button
+                                            onClick={() => handleToggle(schedule.id, !schedule.is_active)}
+                                            className={'px-3 py-1 rounded text-sm ' + (schedule.is_active ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700')}
+                                        >
+                                            {schedule.is_active ? 'Durdur' : 'Baslat'}
+                                        </button>
+                                        <button
+                                            onClick={() => handleDelete(schedule.id)}
+                                            className="px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-sm"
+                                        >
+                                            Sil
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // Main App
+        const App = () => {
+            const [refreshKey, setRefreshKey] = useState(0);
+
+            return (
+                <div className="min-h-screen p-6">
+                    <Navigation />
+
+                    <h1 className="text-2xl font-bold mb-6">Veri Cekimi</h1>
+
+                    <FilteredScrapePanel onScrapeComplete={() => setRefreshKey(k => k + 1)} />
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <ScrapeSessionsList key={'sessions-' + refreshKey} />
+                        <ScheduleManager />
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

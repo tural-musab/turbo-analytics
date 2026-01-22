@@ -3,15 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Turbo.az Analytics Dashboard</title>
+    <title>Turbo.az Analytics</title>
 
     <!-- React -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -22,7 +19,7 @@
     <div id="root"></div>
 
     <script type="text/babel" data-presets="react">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect } = React;
 
         const API_URL = 'http://localhost:8000/api';
 
@@ -31,362 +28,22 @@
             return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
         };
 
-        const formatPrice = (price, currency) => {
-            return formatNumber(price) + ' ' + (currency || 'AZN');
-        };
-
-        const StatCard = ({ title, value, icon, color }) => (
-            <div className={'stat-card rounded-2xl p-6 ' + color}>
-                <div className="flex items-center justify-between">
-                    <div>
-                        <p className="text-gray-400 text-sm mb-1">{title}</p>
-                        <p className="text-3xl font-bold">{value}</p>
-                    </div>
-                    <div className="text-4xl opacity-50">{icon}</div>
-                </div>
-            </div>
-        );
-
-        const CarCard = ({ car, rank }) => (
-            <div
-                className="glass rounded-xl p-4 hover:scale-105 transition-transform cursor-pointer"
-                onClick={() => window.open(car.url, '_blank')}
-            >
-                <div className="flex items-start gap-4">
-                    <div className={'text-2xl font-bold w-10 h-10 rounded-full flex items-center justify-center ' + (rank <= 3 ? 'bg-yellow-500' : 'bg-gray-600')}>
-                        {rank}
-                    </div>
-                    <div className="flex-1">
-                        <h3 className="font-semibold text-lg">{car.name}</h3>
-                        <div className="flex items-center gap-2 mt-1 text-sm text-gray-400">
-                            <span>{car.year}</span>
-                            <span>-</span>
-                            <span>{car.engine}</span>
-                            <span>-</span>
-                            <span>{car.city}</span>
-                        </div>
-                        <div className="flex items-center justify-between mt-3">
-                            <span className="text-xl font-bold text-green-400">
-                                {formatPrice(car.price, car.currency)}
-                            </span>
-                            <span className="flex items-center gap-1 text-blue-400">
-                                <span>Views:</span>
-                                <span className="font-semibold">{formatNumber(car.views)}</span>
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
-
-        const BrandChart = ({ data }) => {
-            const chartRef = useRef(null);
-            const chartInstance = useRef(null);
-
-            useEffect(() => {
-                if (chartInstance.current) {
-                    chartInstance.current.destroy();
-                }
-
-                if (chartRef.current && data && data.length > 0) {
-                    const ctx = chartRef.current.getContext('2d');
-                    chartInstance.current = new Chart(ctx, {
-                        type: 'doughnut',
-                        data: {
-                            labels: data.map(function(d) { return d.brand; }),
-                            datasets: [{
-                                data: data.map(function(d) { return d.count; }),
-                                backgroundColor: [
-                                    '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6',
-                                    '#EC4899', '#06B6D4', '#F97316', '#14B8A6', '#6366F1'
-                                ],
-                                borderWidth: 0
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            plugins: {
-                                legend: {
-                                    position: 'right',
-                                    labels: { color: '#fff', padding: 15 }
-                                }
-                            }
-                        }
-                    });
-                }
-
-                return () => {
-                    if (chartInstance.current) {
-                        chartInstance.current.destroy();
-                    }
-                };
-            }, [data]);
-
-            return <canvas ref={chartRef} />;
-        };
-
-        const FilterPanel = ({ onScrapeComplete }) => {
-            const [makes, setMakes] = useState([]);
-            const [models, setModels] = useState([]);
-            const [selectedMake, setSelectedMake] = useState('');
-            const [selectedModel, setSelectedModel] = useState('');
-            const [modelsLoading, setModelsLoading] = useState(false);
-            const [minPrice, setMinPrice] = useState('');
-            const [maxPrice, setMaxPrice] = useState('');
-            const [minYear, setMinYear] = useState('');
-            const [maxYear, setMaxYear] = useState('');
-            const [maxPages, setMaxPages] = useState(20);
-            const [filterInfo, setFilterInfo] = useState(null);
-            const [scraping, setScraping] = useState(false);
-            const [expanded, setExpanded] = useState(false);
-
-            useEffect(() => {
-                fetch(API_URL + '/makes')
-                    .then(res => res.json())
-                    .then(data => setMakes(data))
-                    .catch(err => console.error('Makes fetch error:', err));
-            }, []);
-
-            useEffect(() => {
-                setSelectedModel('');
-                setModels([]);
-                if (!selectedMake) return;
-
-                setModelsLoading(true);
-                fetch(API_URL + '/models/' + selectedMake)
-                    .then(res => res.json())
-                    .then(data => {
-                        setModels(data);
-                        setModelsLoading(false);
-                    })
-                    .catch(err => {
-                        console.error('Models fetch error:', err);
-                        setModelsLoading(false);
-                    });
-            }, [selectedMake]);
-
-            useEffect(() => {
-                if (!selectedMake && !selectedModel && !minPrice && !maxPrice && !minYear && !maxYear) {
-                    setFilterInfo(null);
-                    return;
-                }
-
-                const params = new URLSearchParams();
-                if (selectedMake) params.append('make_id', selectedMake);
-                if (selectedModel) params.append('model_id', selectedModel);
-                if (minPrice) params.append('min_price', minPrice);
-                if (maxPrice) params.append('max_price', maxPrice);
-                if (minYear) params.append('min_year', minYear);
-                if (maxYear) params.append('max_year', maxYear);
-
-                fetch(API_URL + '/filter-info?' + params.toString())
-                    .then(res => res.json())
-                    .then(data => setFilterInfo(data))
-                    .catch(err => console.error('Filter info error:', err));
-            }, [selectedMake, selectedModel, minPrice, maxPrice, minYear, maxYear]);
-
-            const handleFilteredScrape = async () => {
-                if (scraping) return;
-                setScraping(true);
-
-                const params = new URLSearchParams();
-                if (selectedMake) params.append('make_id', selectedMake);
-                if (selectedModel) params.append('model_id', selectedModel);
-                if (minPrice) params.append('min_price', minPrice);
-                if (maxPrice) params.append('max_price', maxPrice);
-                if (minYear) params.append('min_year', minYear);
-                if (maxYear) params.append('max_year', maxYear);
-                params.append('max_pages', maxPages);
-
-                try {
-                    const res = await fetch(API_URL + '/scrape-filtered?' + params.toString(), { method: 'POST' });
-                    const data = await res.json();
-                    alert('Tamamlandi! ' + data.total_scraped + ' arac cekildi (' + data.elapsed_seconds + ' sn)');
-                    if (onScrapeComplete) onScrapeComplete();
-                } catch (err) {
-                    alert('Scraping basarisiz!');
-                } finally {
-                    setScraping(false);
-                }
-            };
-
-            const selectedMakeName = makes.find(m => m.id == selectedMake)?.name || 'Tum Markalar';
-            const selectedModelName = models.find(m => m.id == selectedModel)?.name || '';
-
-            return (
-                <div className="glass rounded-2xl p-4 mb-6">
-                    <div
-                        className="flex items-center justify-between cursor-pointer"
-                        onClick={() => setExpanded(!expanded)}
-                    >
-                        <div className="flex items-center gap-3">
-                            <span className="text-xl">🎯</span>
-                            <span className="font-semibold">Filtrelenmiş Veri Cekimi</span>
-                            {selectedMake && <span className="bg-blue-500 px-2 py-1 rounded text-sm">{selectedMakeName}</span>}
-                            {selectedModel && <span className="bg-green-500 px-2 py-1 rounded text-sm">{selectedModelName}</span>}
-                        </div>
-                        <span className="text-gray-400">{expanded ? '▲' : '▼'}</span>
-                    </div>
-
-                    {expanded && (
-                        <div className="mt-4 space-y-4">
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Marka</label>
-                                    <select
-                                        value={selectedMake}
-                                        onChange={(e) => setSelectedMake(e.target.value)}
-                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
-                                    >
-                                        <option value="">Tum Markalar</option>
-                                        {makes.map(make => (
-                                            <option key={make.id} value={make.id}>{make.name}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Model</label>
-                                    <select
-                                        value={selectedModel}
-                                        onChange={(e) => setSelectedModel(e.target.value)}
-                                        disabled={!selectedMake || modelsLoading}
-                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 disabled:opacity-50"
-                                    >
-                                        <option value="">{modelsLoading ? 'Yukleniyor...' : 'Tum Modeller'}</option>
-                                        {models.map(model => (
-                                            <option key={model.id} value={model.id}>{model.name} ({model.count})</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Min Fiyat (AZN)</label>
-                                    <input
-                                        type="number"
-                                        value={minPrice}
-                                        onChange={(e) => setMinPrice(e.target.value)}
-                                        placeholder="0"
-                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Max Fiyat (AZN)</label>
-                                    <input
-                                        type="number"
-                                        value={maxPrice}
-                                        onChange={(e) => setMaxPrice(e.target.value)}
-                                        placeholder="999999"
-                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Min Yil</label>
-                                    <input
-                                        type="number"
-                                        value={minYear}
-                                        onChange={(e) => setMinYear(e.target.value)}
-                                        placeholder="2000"
-                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Max Yil</label>
-                                    <input
-                                        type="number"
-                                        value={maxYear}
-                                        onChange={(e) => setMaxYear(e.target.value)}
-                                        placeholder="2025"
-                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Max Sayfa</label>
-                                    <input
-                                        type="number"
-                                        value={maxPages}
-                                        onChange={(e) => setMaxPages(e.target.value)}
-                                        min="1"
-                                        max="100"
-                                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
-                                    />
-                                </div>
-                            </div>
-
-                            {filterInfo && (
-                                <div className="bg-gray-800 rounded-lg p-3 flex items-center justify-between">
-                                    <div className="text-sm">
-                                        <span className="text-gray-400">Toplam: </span>
-                                        <span className="font-semibold">{filterInfo.total_pages} sayfa</span>
-                                        <span className="text-gray-400 mx-2">|</span>
-                                        <span className="text-gray-400">~</span>
-                                        <span className="font-semibold">{formatNumber(filterInfo.estimated_cars)} arac</span>
-                                    </div>
-                                    <div className="text-sm text-gray-400">
-                                        Cekilecek: {Math.min(filterInfo.total_pages, maxPages)} sayfa
-                                    </div>
-                                </div>
-                            )}
-
-                            <button
-                                onClick={handleFilteredScrape}
-                                disabled={scraping}
-                                className={'w-full py-3 rounded-xl font-semibold ' + (scraping ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-500 hover:bg-green-600')}
-                            >
-                                {scraping ? 'Veriler Cekiliyor...' : '🚀 Filtrelenmiş Verileri Cek'}
-                            </button>
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
         const App = () => {
             const [stats, setStats] = useState(null);
-            const [topViewed, setTopViewed] = useState([]);
             const [loading, setLoading] = useState(true);
-            const [scraping, setScraping] = useState(false);
             const [error, setError] = useState(null);
 
-            const fetchData = async () => {
-                try {
-                    setLoading(true);
-                    const statsRes = await fetch(API_URL + '/stats');
-                    const topRes = await fetch(API_URL + '/top-viewed?limit=10');
-
-                    if (!statsRes.ok || !topRes.ok) throw new Error('API error');
-
-                    setStats(await statsRes.json());
-                    setTopViewed(await topRes.json());
-                    setError(null);
-                } catch (err) {
-                    setError('API baglantisi kurulamadi. Backend calisiyor mu?');
-                    console.error(err);
-                } finally {
-                    setLoading(false);
-                }
-            };
-
-            const triggerScrape = async () => {
-                if (scraping) return;
-
-                setScraping(true);
-                try {
-                    const res = await fetch(API_URL + '/scrape?pages=5', { method: 'POST' });
-                    const data = await res.json();
-                    alert('Scraping tamamlandi! ' + data.total_scraped + ' arac cekildi.');
-                    fetchData();
-                } catch (err) {
-                    alert('Scraping basarisiz!');
-                } finally {
-                    setScraping(false);
-                }
-            };
-
             useEffect(() => {
-                fetchData();
+                fetch(API_URL + '/stats')
+                    .then(res => res.json())
+                    .then(data => {
+                        setStats(data);
+                        setLoading(false);
+                    })
+                    .catch(err => {
+                        setError('API baglantisi kurulamadi');
+                        setLoading(false);
+                    });
             }, []);
 
             if (loading) {
@@ -394,94 +51,68 @@
                     <div className="min-h-screen flex items-center justify-center">
                         <div className="text-center">
                             <div className="text-6xl mb-4 loading">...</div>
-                            <p className="text-xl text-gray-400">Veriler yukleniyor...</p>
+                            <p className="text-xl text-gray-400">Yukleniyor...</p>
                         </div>
                     </div>
                 );
             }
-
-            if (error) {
-                return (
-                    <div className="min-h-screen flex items-center justify-center">
-                        <div className="text-center glass rounded-2xl p-8 max-w-md">
-                            <div className="text-6xl mb-4">!</div>
-                            <h2 className="text-xl font-bold mb-2">Baglanti Hatasi</h2>
-                            <p className="text-gray-400 mb-4">{error}</p>
-                            <button
-                                onClick={fetchData}
-                                className="bg-blue-500 hover:bg-blue-600 px-6 py-2 rounded-lg"
-                            >
-                                Tekrar Dene
-                            </button>
-                        </div>
-                    </div>
-                );
-            }
-
-            var totalCars = stats ? stats.total_cars : 0;
-            var totalViews = stats ? stats.total_views : 0;
-            var avgPrice = stats ? Math.round(stats.avg_price_azn) : 0;
-            var topBrands = stats && stats.top_brands ? stats.top_brands : [];
 
             return (
-                <div className="min-h-screen p-6">
-                    <header className="flex items-center justify-between mb-8">
-                        <div>
-                            <h1 className="text-3xl font-bold">Turbo.az Analytics</h1>
-                            <p className="text-gray-400 mt-1">Azerbaycan Otomobil Pazari Analiz Platformu</p>
+                <div className="min-h-screen flex items-center justify-center p-6">
+                    <div className="max-w-4xl w-full">
+                        <div className="text-center mb-12">
+                            <h1 className="text-5xl font-bold mb-4">Turbo.az Analytics</h1>
+                            <p className="text-xl text-gray-400">Azerbaycan Otomobil Pazari Analiz Platformu</p>
                         </div>
-                        <button
-                            onClick={triggerScrape}
-                            disabled={scraping}
-                            className={'px-6 py-3 rounded-xl font-semibold ' + (scraping ? 'bg-gray-600 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600 glow')}
-                        >
-                            {scraping ? 'Cekiliyor...' : 'Verileri Guncelle'}
-                        </button>
-                    </header>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-                        <StatCard title="Toplam Arac" value={formatNumber(totalCars)} icon="C" color="border-l-4 border-blue-500" />
-                        <StatCard title="Toplam Goruntulenme" value={formatNumber(totalViews)} icon="V" color="border-l-4 border-green-500" />
-                        <StatCard title="Ortalama Fiyat" value={formatNumber(avgPrice) + ' AZN'} icon="$" color="border-l-4 border-yellow-500" />
-                        <StatCard title="Marka Sayisi" value={topBrands.length} icon="B" color="border-l-4 border-purple-500" />
-                    </div>
-
-                    <FilterPanel onScrapeComplete={fetchData} />
-
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <div className="lg:col-span-2">
-                            <div className="glass rounded-2xl p-6">
-                                <h2 className="text-xl font-bold mb-4">En Cok Goruntulenen Araclar</h2>
-                                <div className="space-y-3">
-                                    {topViewed.map((car, index) => (
-                                        <CarCard key={car.turbo_id || index} car={car} rank={index + 1} />
-                                    ))}
-                                    {topViewed.length === 0 && (
-                                        <p className="text-gray-400 text-center py-8">
-                                            Henuz veri yok. "Verileri Guncelle" butonuna tiklayin.
-                                        </p>
-                                    )}
+                        {error ? (
+                            <div className="glass rounded-2xl p-8 text-center mb-8">
+                                <p className="text-red-400 mb-4">{error}</p>
+                                <p className="text-sm text-gray-400">Backend'i baslatmak icin: <code className="bg-gray-800 px-2 py-1 rounded">cd backend && python api.py</code></p>
+                            </div>
+                        ) : stats && (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+                                <div className="glass rounded-2xl p-6 text-center">
+                                    <p className="text-gray-400 mb-2">Toplam Arac</p>
+                                    <p className="text-4xl font-bold text-blue-400">{formatNumber(stats.total_cars)}</p>
+                                </div>
+                                <div className="glass rounded-2xl p-6 text-center">
+                                    <p className="text-gray-400 mb-2">Toplam Goruntulenme</p>
+                                    <p className="text-4xl font-bold text-green-400">{formatNumber(stats.total_views)}</p>
+                                </div>
+                                <div className="glass rounded-2xl p-6 text-center">
+                                    <p className="text-gray-400 mb-2">Ortalama Fiyat</p>
+                                    <p className="text-4xl font-bold text-yellow-400">{formatNumber(Math.round(stats.avg_price_azn))} AZN</p>
                                 </div>
                             </div>
+                        )}
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <a
+                                href="scraper.html"
+                                className="glass rounded-2xl p-8 hover:scale-105 transition-transform cursor-pointer block text-center"
+                            >
+                                <div className="text-5xl mb-4">🎯</div>
+                                <h2 className="text-2xl font-bold mb-2">Veri Cekimi</h2>
+                                <p className="text-gray-400">Turbo.az'dan veri cekin, filtreleyin ve zamanli isler olusturun</p>
+                                <div className="mt-4 text-blue-400 font-semibold">Scraper Sayfasina Git →</div>
+                            </a>
+
+                            <a
+                                href="dashboard.html"
+                                className="glass rounded-2xl p-8 hover:scale-105 transition-transform cursor-pointer block text-center"
+                            >
+                                <div className="text-5xl mb-4">📊</div>
+                                <h2 className="text-2xl font-bold mb-2">Dashboard</h2>
+                                <p className="text-gray-400">Verileri analiz edin, trendleri takip edin ve raporlar indirin</p>
+                                <div className="mt-4 text-green-400 font-semibold">Dashboard'a Git →</div>
+                            </a>
                         </div>
 
-                        <div>
-                            <div className="glass rounded-2xl p-6 h-full">
-                                <h2 className="text-xl font-bold mb-4">Marka Dagilimi</h2>
-                                <div className="h-80">
-                                    {topBrands.length > 0 ? (
-                                        <BrandChart data={topBrands} />
-                                    ) : (
-                                        <p className="text-gray-400 text-center py-8">Veri bekleniyor...</p>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
+                        <footer className="mt-12 text-center text-gray-500 text-sm">
+                            <p>Turbo.az Analytics v2.0</p>
+                        </footer>
                     </div>
-
-                    <footer className="mt-8 text-center text-gray-500 text-sm">
-                        <p>Turbo.az Analytics</p>
-                    </footer>
                 </div>
             );
         };

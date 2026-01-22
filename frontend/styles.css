@@ -48,3 +48,36 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
 }
+
+/* Additional Styles for v2.0 */
+.hover\:scale-102:hover {
+    transform: scale(1.02);
+}
+
+/* Tab Navigation */
+nav a.active {
+    background: rgba(59, 130, 246, 0.5);
+}
+
+/* Modal Backdrop */
+.modal-backdrop {
+    backdrop-filter: blur(4px);
+}
+
+/* Price Change Indicators */
+.price-up { color: #EF4444; }
+.price-down { color: #10B981; }
+
+/* Session Badge */
+.session-badge {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(139, 92, 246, 0.2) 100%);
+}
+
+/* Card Hover Effect */
+.card-hover {
+    transition: all 0.2s ease;
+}
+.card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}

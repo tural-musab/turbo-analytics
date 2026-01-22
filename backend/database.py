@@ -1,13 +1,14 @@
 """
 Turbo.az Analytics - Database Module
 SQLite veritabani islemleri
+Fiyat gecmisi ve scrape session takibi destekli
 """
 
 import json
 import os
 import sqlite3
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 BASE_DIR = os.path.dirname(__file__)
 DB_PATH = os.path.join(BASE_DIR, "turbo_analytics.db")
@@ -58,7 +59,59 @@ def init_database() -> None:
         """
     )
 
+    # Scrape session'lari - her scrape islemini takip eder
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scrape_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            finished_at TIMESTAMP,
+            status TEXT DEFAULT 'running',
+            total_cars INTEGER DEFAULT 0,
+            new_cars INTEGER DEFAULT 0,
+            updated_cars INTEGER DEFAULT 0,
+            price_changes INTEGER DEFAULT 0,
+            filters_json TEXT
+        )
+        """
+    )
+
+    # Fiyat gecmisi - her fiyat degisikligini kaydeder
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS price_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turbo_id TEXT NOT NULL,
+            old_price INTEGER,
+            new_price INTEGER NOT NULL,
+            currency TEXT DEFAULT 'AZN',
+            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            scrape_session_id INTEGER,
+            FOREIGN KEY (turbo_id) REFERENCES cars(turbo_id),
+            FOREIGN KEY (scrape_session_id) REFERENCES scrape_sessions(id)
+        )
+        """
+    )
+
+    # Session'da cekilen araclar - hangi araclar hangi session'da cekildi
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_cars (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scrape_session_id INTEGER NOT NULL,
+            turbo_id TEXT NOT NULL,
+            is_new BOOLEAN DEFAULT FALSE,
+            price_changed BOOLEAN DEFAULT FALSE,
+            FOREIGN KEY (scrape_session_id) REFERENCES scrape_sessions(id),
+            FOREIGN KEY (turbo_id) REFERENCES cars(turbo_id)
+        )
+        """
+    )
+
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_views ON cars(views DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_history_turbo ON price_history(turbo_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_history_date ON price_history(recorded_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_cars ON session_cars(scrape_session_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_brand ON cars(brand)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_price ON cars(price)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_year ON cars(year)")
@@ -250,6 +303,331 @@ def search_cars(
     params.append(limit)
 
     cursor.execute(query, params)
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results
+
+
+# ==================== SCRAPE SESSION FONKSIYONLARI ====================
+
+
+def create_scrape_session(filters: Optional[Dict] = None) -> int:
+    """Yeni scrape session olustur ve ID dondur."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO scrape_sessions (started_at, status, filters_json)
+        VALUES (?, 'running', ?)
+        """,
+        (datetime.now().isoformat(), json.dumps(filters) if filters else None),
+    )
+
+    session_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return session_id
+
+
+def finish_scrape_session(
+    session_id: int,
+    total_cars: int = 0,
+    new_cars: int = 0,
+    updated_cars: int = 0,
+    price_changes: int = 0,
+    status: str = "completed",
+) -> None:
+    """Scrape session'i tamamla ve istatistikleri kaydet."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE scrape_sessions
+        SET finished_at = ?,
+            status = ?,
+            total_cars = ?,
+            new_cars = ?,
+            updated_cars = ?,
+            price_changes = ?
+        WHERE id = ?
+        """,
+        (
+            datetime.now().isoformat(),
+            status,
+            total_cars,
+            new_cars,
+            updated_cars,
+            price_changes,
+            session_id,
+        ),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def save_car_with_history(car_data: Dict, session_id: int) -> Dict[str, Any]:
+    """
+    Arac kaydet, fiyat degisikligini takip et ve session'a bagla.
+    Returns: {"is_new": bool, "price_changed": bool, "old_price": int|None}
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    result = {"is_new": False, "price_changed": False, "old_price": None}
+
+    try:
+        turbo_id = car_data.get("turbo_id")
+        new_price = car_data.get("price")
+        currency = car_data.get("currency", "AZN")
+
+        # Mevcut araci kontrol et
+        cursor.execute(
+            "SELECT id, price, currency FROM cars WHERE turbo_id = ?",
+            (turbo_id,),
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            old_price = existing["price"]
+            result["old_price"] = old_price
+
+            # Fiyat degisti mi?
+            if old_price != new_price:
+                result["price_changed"] = True
+
+                # Fiyat gecmisine kaydet
+                cursor.execute(
+                    """
+                    INSERT INTO price_history
+                    (turbo_id, old_price, new_price, currency, scrape_session_id)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (turbo_id, old_price, new_price, currency, session_id),
+                )
+        else:
+            result["is_new"] = True
+
+        # Araci kaydet/guncelle
+        cursor.execute(
+            """
+            INSERT INTO cars (
+                turbo_id, url, name, brand, model, price, currency,
+                year, engine, mileage, city, views, is_new, is_vip,
+                is_premium, created_at, raw_data
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(turbo_id) DO UPDATE SET
+                views = excluded.views,
+                price = excluded.price,
+                updated_at = CURRENT_TIMESTAMP,
+                raw_data = excluded.raw_data
+            """,
+            (
+                turbo_id,
+                car_data.get("url"),
+                car_data.get("name"),
+                car_data.get("brand"),
+                car_data.get("model"),
+                new_price,
+                currency,
+                car_data.get("year"),
+                car_data.get("engine"),
+                car_data.get("mileage"),
+                car_data.get("city"),
+                car_data.get("views", 0),
+                car_data.get("is_new", False),
+                car_data.get("is_vip", False),
+                car_data.get("is_premium", False),
+                datetime.now().isoformat(),
+                json.dumps(car_data, ensure_ascii=False),
+            ),
+        )
+
+        # Session-car iliskisini kaydet
+        cursor.execute(
+            """
+            INSERT INTO session_cars
+            (scrape_session_id, turbo_id, is_new, price_changed)
+            VALUES (?, ?, ?, ?)
+            """,
+            (session_id, turbo_id, result["is_new"], result["price_changed"]),
+        )
+
+        conn.commit()
+        return result
+
+    except Exception as exc:
+        print(f"Kayit hatasi: {exc}")
+        conn.rollback()
+        return result
+    finally:
+        conn.close()
+
+
+def save_cars_batch_with_session(
+    cars: List[Dict], filters: Optional[Dict] = None
+) -> Dict[str, Any]:
+    """
+    Toplu arac kaydet, session olustur ve istatistikleri dondur.
+    Returns: {session_id, total, new_cars, updated_cars, price_changes}
+    """
+    session_id = create_scrape_session(filters)
+
+    stats = {
+        "session_id": session_id,
+        "total": 0,
+        "new_cars": 0,
+        "updated_cars": 0,
+        "price_changes": 0,
+    }
+
+    for car in cars:
+        result = save_car_with_history(car, session_id)
+        stats["total"] += 1
+
+        if result["is_new"]:
+            stats["new_cars"] += 1
+        else:
+            stats["updated_cars"] += 1
+
+        if result["price_changed"]:
+            stats["price_changes"] += 1
+
+    finish_scrape_session(
+        session_id,
+        total_cars=stats["total"],
+        new_cars=stats["new_cars"],
+        updated_cars=stats["updated_cars"],
+        price_changes=stats["price_changes"],
+    )
+
+    return stats
+
+
+# ==================== FIYAT GECMISI FONKSIYONLARI ====================
+
+
+def get_price_history(turbo_id: str, limit: int = 50) -> List[Dict]:
+    """Bir aracin fiyat gecmisini getir."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT old_price, new_price, currency, recorded_at
+        FROM price_history
+        WHERE turbo_id = ?
+        ORDER BY recorded_at DESC
+        LIMIT ?
+        """,
+        (turbo_id, limit),
+    )
+
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results
+
+
+def get_car_with_history(turbo_id: str) -> Optional[Dict]:
+    """Arac bilgisi ve fiyat gecmisiyle birlikte getir."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM cars WHERE turbo_id = ?", (turbo_id,))
+    car = cursor.fetchone()
+
+    if not car:
+        conn.close()
+        return None
+
+    result = dict(car)
+    result["price_history"] = get_price_history(turbo_id)
+    conn.close()
+    return result
+
+
+# ==================== SCRAPE SESSION SORGULARI ====================
+
+
+def get_scrape_sessions(limit: int = 20) -> List[Dict]:
+    """Son scrape session'lari getir."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT * FROM scrape_sessions
+        ORDER BY started_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results
+
+
+def get_session_cars(session_id: int, limit: int = 100) -> List[Dict]:
+    """Bir session'da cekilen araclari getir."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT c.*, sc.is_new, sc.price_changed
+        FROM cars c
+        INNER JOIN session_cars sc ON c.turbo_id = sc.turbo_id
+        WHERE sc.scrape_session_id = ?
+        ORDER BY c.views DESC
+        LIMIT ?
+        """,
+        (session_id, limit),
+    )
+
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results
+
+
+def get_price_changes(days: int = 7, limit: int = 50) -> List[Dict]:
+    """Son X gundeki fiyat degisikliklerini getir."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            ph.turbo_id,
+            ph.old_price,
+            ph.new_price,
+            ph.currency,
+            ph.recorded_at,
+            c.name,
+            c.brand,
+            c.model,
+            c.year,
+            c.url,
+            (ph.new_price - ph.old_price) as price_diff,
+            ROUND(((ph.new_price - ph.old_price) * 100.0 / ph.old_price), 2) as price_change_percent
+        FROM price_history ph
+        INNER JOIN cars c ON ph.turbo_id = c.turbo_id
+        WHERE ph.recorded_at >= datetime('now', '-' || ? || ' days')
+        ORDER BY ABS(ph.new_price - ph.old_price) DESC
+        LIMIT ?
+        """,
+        (days, limit),
+    )
+
     results = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return results

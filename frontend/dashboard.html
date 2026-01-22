@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Turbo.az Analytics - Dashboard</title>
+
+    <!-- React -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="text-white">
+    <div id="root"></div>
+
+    <script type="text/babel" data-presets="react">
+        const { useState, useEffect, useRef } = React;
+
+        const API_URL = 'http://localhost:8000/api';
+
+        const formatNumber = (num) => {
+            if (!num) return '0';
+            return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        };
+
+        const formatPrice = (price, currency) => {
+            return formatNumber(price) + ' ' + (currency || 'AZN');
+        };
+
+        const formatDate = (dateStr) => {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleString('az-AZ');
+        };
+
+        // Get session ID from URL
+        const getSessionIdFromUrl = () => {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('session');
+        };
+
+        // Navigation Component
+        const Navigation = () => (
+            <nav className="glass mb-6 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                    <a href="index.html" className="text-xl font-bold hover:text-blue-400">Turbo.az Analytics</a>
+                    <div className="flex gap-4">
+                        <a href="scraper.html" className="px-4 py-2 rounded-lg hover:bg-gray-700">Veri Cekimi</a>
+                        <a href="dashboard.html" className="px-4 py-2 rounded-lg bg-blue-500">Dashboard</a>
+                    </div>
+                </div>
+            </nav>
+        );
+
+        // Stats Overview with Trends
+        const StatsOverview = ({ stats, marketSummary }) => {
+            if (!stats) return null;
+
+            return (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    <div className="glass rounded-xl p-4">
+                        <p className="text-gray-400 text-sm">Toplam Arac</p>
+                        <p className="text-3xl font-bold text-blue-400">{formatNumber(stats.total_cars)}</p>
+                        {marketSummary && (
+                            <p className="text-sm text-green-400 mt-1">+{marketSummary.overview?.new_cars_period || 0} bu ay</p>
+                        )}
+                    </div>
+                    <div className="glass rounded-xl p-4">
+                        <p className="text-gray-400 text-sm">Toplam Goruntulenme</p>
+                        <p className="text-3xl font-bold text-green-400">{formatNumber(stats.total_views)}</p>
+                    </div>
+                    <div className="glass rounded-xl p-4">
+                        <p className="text-gray-400 text-sm">Ortalama Fiyat</p>
+                        <p className="text-3xl font-bold text-yellow-400">{formatNumber(Math.round(stats.avg_price_azn))} AZN</p>
+                    </div>
+                    <div className="glass rounded-xl p-4">
+                        <p className="text-gray-400 text-sm">Fiyat Degisimleri</p>
+                        <p className="text-3xl font-bold text-purple-400">{marketSummary?.overview?.price_changes_period || 0}</p>
+                        <p className="text-sm text-gray-400 mt-1">son 30 gun</p>
+                    </div>
+                </div>
+            );
+        };
+
+        // Filter Bar
+        const FilterBar = ({ filters, setFilters, sessions }) => {
+            const [brands, setBrands] = useState([]);
+
+            useEffect(() => {
+                fetch(API_URL + '/brands')
+                    .then(res => res.json())
+                    .then(data => setBrands(data))
+                    .catch(console.error);
+            }, []);
+
+            return (
+                <div className="glass rounded-xl p-4 mb-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Session</label>
+                            <select
+                                value={filters.sessionId || ''}
+                                onChange={(e) => setFilters({...filters, sessionId: e.target.value})}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                            >
+                                <option value="">Tum Veriler</option>
+                                {sessions.map(s => (
+                                    <option key={s.id} value={s.id}>Session {s.id} ({s.total_cars} arac)</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Marka</label>
+                            <select
+                                value={filters.brand || ''}
+                                onChange={(e) => setFilters({...filters, brand: e.target.value})}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                            >
+                                <option value="">Tum Markalar</option>
+                                {brands.map(b => (
+                                    <option key={b.brand} value={b.brand}>{b.brand} ({b.count})</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Min Fiyat</label>
+                            <input
+                                type="number"
+                                value={filters.minPrice || ''}
+                                onChange={(e) => setFilters({...filters, minPrice: e.target.value})}
+                                placeholder="0"
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Max Fiyat</label>
+                            <input
+                                type="number"
+                                value={filters.maxPrice || ''}
+                                onChange={(e) => setFilters({...filters, maxPrice: e.target.value})}
+                                placeholder="999999"
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Min Yil</label>
+                            <input
+                                type="number"
+                                value={filters.minYear || ''}
+                                onChange={(e) => setFilters({...filters, minYear: e.target.value})}
+                                placeholder="2000"
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Siralama</label>
+                            <select
+                                value={filters.sortBy || 'views'}
+                                onChange={(e) => setFilters({...filters, sortBy: e.target.value})}
+                                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm"
+                            >
+                                <option value="views">Goruntulenme</option>
+                                <option value="price_asc">Fiyat (Artan)</option>
+                                <option value="price_desc">Fiyat (Azalan)</option>
+                                <option value="year">Yil</option>
+                                <option value="newest">En Yeni</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Car Card
+        const CarCard = ({ car, onClick }) => (
+            <div
+                className="glass rounded-xl p-4 hover:scale-102 transition-transform cursor-pointer"
+                onClick={onClick}
+            >
+                <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                        <h3 className="font-semibold">{car.name}</h3>
+                        <div className="flex items-center gap-2 mt-1 text-sm text-gray-400">
+                            <span>{car.year}</span>
+                            <span>-</span>
+                            <span>{car.engine}</span>
+                            <span>-</span>
+                            <span>{car.city}</span>
+                        </div>
+                    </div>
+                    <div className="text-right">
+                        <p className="text-lg font-bold text-green-400">{formatPrice(car.price, car.currency)}</p>
+                        <p className="text-sm text-blue-400">{formatNumber(car.views)} views</p>
+                    </div>
+                </div>
+                <div className="flex gap-2 mt-2">
+                    {car.is_new && <span className="px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">0 KM</span>}
+                    {car.is_vip && <span className="px-2 py-0.5 rounded text-xs bg-yellow-900 text-yellow-300">VIP</span>}
+                    {car.is_premium && <span className="px-2 py-0.5 rounded text-xs bg-purple-900 text-purple-300">Premium</span>}
+                </div>
+            </div>
+        );
+
+        // Car Detail Modal with Price History
+        const CarDetailModal = ({ car, onClose }) => {
+            const [priceHistory, setPriceHistory] = useState([]);
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            useEffect(() => {
+                if (!car) return;
+
+                fetch(API_URL + '/price-history/' + car.turbo_id)
+                    .then(res => res.json())
+                    .then(data => setPriceHistory(data))
+                    .catch(console.error);
+            }, [car]);
+
+            useEffect(() => {
+                if (chartInstance.current) {
+                    chartInstance.current.destroy();
+                }
+
+                if (chartRef.current && priceHistory.length > 1) {
+                    const ctx = chartRef.current.getContext('2d');
+                    chartInstance.current = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: priceHistory.map(h => new Date(h.recorded_at).toLocaleDateString()).reverse(),
+                            datasets: [{
+                                label: 'Fiyat',
+                                data: priceHistory.map(h => h.new_price).reverse(),
+                                borderColor: '#10B981',
+                                tension: 0.1,
+                                fill: false
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: { legend: { display: false } },
+                            scales: {
+                                y: { ticks: { color: '#9CA3AF' }, grid: { color: '#374151' } },
+                                x: { ticks: { color: '#9CA3AF' }, grid: { color: '#374151' } }
+                            }
+                        }
+                    });
+                }
+
+                return () => {
+                    if (chartInstance.current) chartInstance.current.destroy();
+                };
+            }, [priceHistory]);
+
+            if (!car) return null;
+
+            return (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
+                    <div className="bg-gray-900 rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-start mb-4">
+                            <h2 className="text-xl font-bold">{car.name}</h2>
+                            <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl">&times;</button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div className="bg-gray-800 rounded-lg p-3">
+                                <p className="text-gray-400 text-sm">Fiyat</p>
+                                <p className="text-xl font-bold text-green-400">{formatPrice(car.price, car.currency)}</p>
+                            </div>
+                            <div className="bg-gray-800 rounded-lg p-3">
+                                <p className="text-gray-400 text-sm">Goruntulenme</p>
+                                <p className="text-xl font-bold text-blue-400">{formatNumber(car.views)}</p>
+                            </div>
+                            <div className="bg-gray-800 rounded-lg p-3">
+                                <p className="text-gray-400 text-sm">Yil</p>
+                                <p className="text-xl font-bold">{car.year}</p>
+                            </div>
+                            <div className="bg-gray-800 rounded-lg p-3">
+                                <p className="text-gray-400 text-sm">Motor / KM</p>
+                                <p className="text-xl font-bold">{car.engine} / {formatNumber(car.mileage)}</p>
+                            </div>
+                        </div>
+
+                        {priceHistory.length > 1 && (
+                            <div className="mb-4">
+                                <h3 className="font-semibold mb-2">Fiyat Gecmisi</h3>
+                                <div className="h-48">
+                                    <canvas ref={chartRef} />
+                                </div>
+                            </div>
+                        )}
+
+                        {priceHistory.length > 0 && (
+                            <div className="mb-4">
+                                <h3 className="font-semibold mb-2">Fiyat Degisimleri</h3>
+                                <div className="space-y-2 max-h-40 overflow-y-auto">
+                                    {priceHistory.map((h, i) => (
+                                        <div key={i} className="flex justify-between text-sm bg-gray-800 rounded p-2">
+                                            <span className="text-gray-400">{formatDate(h.recorded_at)}</span>
+                                            <span>
+                                                <span className="text-red-400">{formatNumber(h.old_price)}</span>
+                                                <span className="text-gray-400 mx-2">→</span>
+                                                <span className="text-green-400">{formatNumber(h.new_price)}</span>
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <a
+                            href={car.url}
+                            target="_blank"
+                            className="block w-full py-3 text-center bg-blue-500 hover:bg-blue-600 rounded-xl font-semibold"
+                        >
+                            Turbo.az'da Gor →
+                        </a>
+                    </div>
+                </div>
+            );
+        };
+
+        // Cars List
+        const CarsList = ({ filters, sessions }) => {
+            const [cars, setCars] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [selectedCar, setSelectedCar] = useState(null);
+
+            useEffect(() => {
+                setLoading(true);
+
+                if (filters.sessionId) {
+                    // Session bazli veri
+                    fetch(API_URL + '/scrape-sessions/' + filters.sessionId + '/cars?limit=100')
+                        .then(res => res.json())
+                        .then(data => {
+                            setCars(data);
+                            setLoading(false);
+                        })
+                        .catch(err => {
+                            console.error(err);
+                            setLoading(false);
+                        });
+                } else {
+                    // Filtreli veri
+                    const params = new URLSearchParams();
+                    if (filters.brand) params.append('brand', filters.brand);
+                    if (filters.minPrice) params.append('min_price', filters.minPrice);
+                    if (filters.maxPrice) params.append('max_price', filters.maxPrice);
+                    if (filters.minYear) params.append('min_year', filters.minYear);
+                    if (filters.sortBy) params.append('sort_by', filters.sortBy);
+                    params.append('limit', '100');
+
+                    fetch(API_URL + '/cars?' + params.toString())
+                        .then(res => res.json())
+                        .then(data => {
+                            setCars(data);
+                            setLoading(false);
+                        })
+                        .catch(err => {
+                            console.error(err);
+                            setLoading(false);
+                        });
+                }
+            }, [filters]);
+
+            if (loading) {
+                return <div className="glass rounded-2xl p-6"><p className="text-gray-400 text-center">Yukleniyor...</p></div>;
+            }
+
+            return (
+                <div className="glass rounded-2xl p-6">
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-xl font-bold">
+                            Araclar ({cars.length})
+                            {filters.sessionId && <span className="text-sm font-normal text-gray-400 ml-2">Session {filters.sessionId}</span>}
+                        </h2>
+                    </div>
+
+                    {cars.length === 0 ? (
+                        <p className="text-gray-400 text-center py-8">Arac bulunamadi.</p>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {cars.map(car => (
+                                <CarCard key={car.turbo_id} car={car} onClick={() => setSelectedCar(car)} />
+                            ))}
+                        </div>
+                    )}
+
+                    {selectedCar && <CarDetailModal car={selectedCar} onClose={() => setSelectedCar(null)} />}
+                </div>
+            );
+        };
+
+        // Export Panel
+        const ExportPanel = ({ filters }) => {
+            const handleExport = (format) => {
+                const params = new URLSearchParams();
+                if (filters.brand) params.append('brand', filters.brand);
+                if (filters.minPrice) params.append('min_price', filters.minPrice);
+                if (filters.maxPrice) params.append('max_price', filters.maxPrice);
+                if (filters.minYear) params.append('min_year', filters.minYear);
+                if (filters.sortBy) params.append('sort_by', filters.sortBy);
+                params.append('limit', '5000');
+
+                window.open(API_URL + '/export/' + format + '?' + params.toString(), '_blank');
+            };
+
+            const handleSessionExport = () => {
+                if (!filters.sessionId) return;
+                window.open(API_URL + '/export/session/' + filters.sessionId + '/csv', '_blank');
+            };
+
+            return (
+                <div className="glass rounded-xl p-4 mb-6">
+                    <h3 className="font-semibold mb-3">Veri Indir</h3>
+                    <div className="flex flex-wrap gap-3">
+                        <button
+                            onClick={() => handleExport('csv')}
+                            className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-sm"
+                        >
+                            📄 CSV Indir
+                        </button>
+                        <button
+                            onClick={() => handleExport('excel')}
+                            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-sm"
+                        >
+                            📊 Excel Indir
+                        </button>
+                        {filters.sessionId && (
+                            <button
+                                onClick={handleSessionExport}
+                                className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-sm"
+                            >
+                                📋 Session CSV
+                            </button>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // Price Drops Panel
+        const PriceDropsPanel = () => {
+            const [drops, setDrops] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                fetch(API_URL + '/trends/price-drops?threshold=10&days=7&limit=10')
+                    .then(res => res.json())
+                    .then(data => {
+                        setDrops(data.price_drops || []);
+                        setLoading(false);
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        setLoading(false);
+                    });
+            }, []);
+
+            if (loading) return null;
+            if (drops.length === 0) return null;
+
+            return (
+                <div className="glass rounded-xl p-4 mb-6">
+                    <h3 className="font-semibold mb-3 flex items-center gap-2">
+                        <span className="text-red-400">📉</span> Fiyati Dusen Araclar
+                    </h3>
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {drops.map((item, i) => (
+                            <a
+                                key={i}
+                                href={item.url}
+                                target="_blank"
+                                className="block bg-gray-800 rounded-lg p-3 hover:bg-gray-700"
+                            >
+                                <div className="flex justify-between items-center">
+                                    <div>
+                                        <p className="font-semibold text-sm">{item.name}</p>
+                                        <p className="text-xs text-gray-400">{item.year}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-red-400 font-bold">{item.change_percent}%</p>
+                                        <p className="text-xs text-gray-400">
+                                            {formatNumber(item.old_price)} → {formatNumber(item.new_price)}
+                                        </p>
+                                    </div>
+                                </div>
+                            </a>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // Brand Chart
+        const BrandChart = ({ data }) => {
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            useEffect(() => {
+                if (chartInstance.current) {
+                    chartInstance.current.destroy();
+                }
+
+                if (chartRef.current && data && data.length > 0) {
+                    const ctx = chartRef.current.getContext('2d');
+                    chartInstance.current = new Chart(ctx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: data.map(d => d.brand),
+                            datasets: [{
+                                data: data.map(d => d.count),
+                                backgroundColor: [
+                                    '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6',
+                                    '#EC4899', '#06B6D4', '#F97316', '#14B8A6', '#6366F1'
+                                ],
+                                borderWidth: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    position: 'right',
+                                    labels: { color: '#fff', padding: 10, font: { size: 11 } }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                return () => {
+                    if (chartInstance.current) chartInstance.current.destroy();
+                };
+            }, [data]);
+
+            return <canvas ref={chartRef} />;
+        };
+
+        // Main App
+        const App = () => {
+            const [stats, setStats] = useState(null);
+            const [marketSummary, setMarketSummary] = useState(null);
+            const [sessions, setSessions] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+
+            const initialSessionId = getSessionIdFromUrl();
+            const [filters, setFilters] = useState({
+                sessionId: initialSessionId || '',
+                brand: '',
+                minPrice: '',
+                maxPrice: '',
+                minYear: '',
+                sortBy: 'views'
+            });
+
+            useEffect(() => {
+                Promise.all([
+                    fetch(API_URL + '/stats').then(r => r.json()),
+                    fetch(API_URL + '/trends/market-summary?days=30').then(r => r.json()),
+                    fetch(API_URL + '/scrape-sessions?limit=20').then(r => r.json())
+                ])
+                    .then(([statsData, marketData, sessionsData]) => {
+                        setStats(statsData);
+                        setMarketSummary(marketData);
+                        setSessions(sessionsData);
+                        setLoading(false);
+                    })
+                    .catch(err => {
+                        setError('API baglantisi kurulamadi');
+                        setLoading(false);
+                    });
+            }, []);
+
+            if (loading) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center">
+                        <div className="text-center">
+                            <div className="text-6xl mb-4 loading">...</div>
+                            <p className="text-xl text-gray-400">Dashboard yukleniyor...</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (error) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center">
+                        <div className="glass rounded-2xl p-8 text-center">
+                            <p className="text-red-400 mb-4">{error}</p>
+                            <button onClick={() => window.location.reload()} className="px-6 py-2 bg-blue-500 rounded-lg">
+                                Tekrar Dene
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen p-6">
+                    <Navigation />
+
+                    <StatsOverview stats={stats} marketSummary={marketSummary} />
+
+                    <FilterBar filters={filters} setFilters={setFilters} sessions={sessions} />
+
+                    <ExportPanel filters={filters} />
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="lg:col-span-2">
+                            <CarsList filters={filters} sessions={sessions} />
+                        </div>
+                        <div>
+                            <PriceDropsPanel />
+
+                            <div className="glass rounded-xl p-4">
+                                <h3 className="font-semibold mb-3">Marka Dagilimi</h3>
+                                <div className="h-64">
+                                    {stats?.top_brands?.length > 0 ? (
+                                        <BrandChart data={stats.top_brands} />
+                                    ) : (
+                                        <p className="text-gray-400 text-center py-8">Veri yok</p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
