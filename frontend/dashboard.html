@@ -214,6 +214,7 @@
             const [priceHistory, setPriceHistory] = useState([]);
             const chartRef = useRef(null);
             const chartInstance = useRef(null);
+            const modalRef = useRef(null);
 
             useEffect(() => {
                 if (!car) return;
@@ -260,14 +261,36 @@
                 };
             }, [priceHistory]);
 
+            // Handle ESC key to close modal
+            useEffect(() => {
+                const handleEsc = (e) => {
+                    if (e.key === 'Escape') onClose();
+                };
+                window.addEventListener('keydown', handleEsc);
+                return () => window.removeEventListener('keydown', handleEsc);
+            }, [onClose]);
+
             if (!car) return null;
 
-            return (
-                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
-                    <div className="bg-gray-900 rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            return ReactDOM.createPortal(
+                <div
+                    className="fixed inset-0 bg-black/80 flex items-start justify-center z-[9999] p-4 pt-10 overflow-y-auto"
+                    onClick={onClose}
+                    style={{ backdropFilter: 'blur(4px)' }}
+                >
+                    <div
+                        ref={modalRef}
+                        className="bg-gray-900 rounded-2xl p-6 max-w-2xl w-full my-auto shadow-2xl border border-gray-700"
+                        onClick={e => e.stopPropagation()}
+                    >
                         <div className="flex justify-between items-start mb-4">
                             <h2 className="text-xl font-bold">{car.name}</h2>
-                            <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl">&times;</button>
+                            <button
+                                onClick={onClose}
+                                className="text-gray-400 hover:text-white text-2xl w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-800"
+                            >
+                                &times;
+                            </button>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4 mb-4">
@@ -324,25 +347,29 @@
                             Turbo.az'da Gor →
                         </a>
                     </div>
-                </div>
+                </div>,
+                document.body
             );
         };
 
-        // Cars List
+        // Cars List with Load More
         const CarsList = ({ filters, sessions }) => {
-            const [cars, setCars] = useState([]);
+            const [allCars, setAllCars] = useState([]);
             const [loading, setLoading] = useState(true);
             const [selectedCar, setSelectedCar] = useState(null);
+            const [displayCount, setDisplayCount] = useState(10);
+            const LOAD_MORE_COUNT = 10;
 
             useEffect(() => {
                 setLoading(true);
+                setDisplayCount(10); // Reset on filter change
 
                 if (filters.sessionId) {
                     // Session bazli veri
-                    fetch(API_URL + '/scrape-sessions/' + filters.sessionId + '/cars?limit=100')
+                    fetch(API_URL + '/scrape-sessions/' + filters.sessionId + '/cars?limit=500')
                         .then(res => res.json())
                         .then(data => {
-                            setCars(data);
+                            setAllCars(data);
                             setLoading(false);
                         })
                         .catch(err => {
@@ -357,12 +384,12 @@
                     if (filters.maxPrice) params.append('max_price', filters.maxPrice);
                     if (filters.minYear) params.append('min_year', filters.minYear);
                     if (filters.sortBy) params.append('sort_by', filters.sortBy);
-                    params.append('limit', '100');
+                    params.append('limit', '500');
 
                     fetch(API_URL + '/cars?' + params.toString())
                         .then(res => res.json())
                         .then(data => {
-                            setCars(data);
+                            setAllCars(data);
                             setLoading(false);
                         })
                         .catch(err => {
@@ -372,6 +399,25 @@
                 }
             }, [filters]);
 
+            // Lock body scroll when modal is open
+            useEffect(() => {
+                if (selectedCar) {
+                    document.body.style.overflow = 'hidden';
+                } else {
+                    document.body.style.overflow = 'auto';
+                }
+                return () => {
+                    document.body.style.overflow = 'auto';
+                };
+            }, [selectedCar]);
+
+            const displayedCars = allCars.slice(0, displayCount);
+            const hasMore = displayCount < allCars.length;
+
+            const handleLoadMore = () => {
+                setDisplayCount(prev => prev + LOAD_MORE_COUNT);
+            };
+
             if (loading) {
                 return <div className="glass rounded-2xl p-6"><p className="text-gray-400 text-center">Yukleniyor...</p></div>;
             }
@@ -380,19 +426,32 @@
                 <div className="glass rounded-2xl p-6">
                     <div className="flex justify-between items-center mb-4">
                         <h2 className="text-xl font-bold">
-                            Araclar ({cars.length})
+                            Araclar ({displayedCars.length} / {allCars.length})
                             {filters.sessionId && <span className="text-sm font-normal text-gray-400 ml-2">Session {filters.sessionId}</span>}
                         </h2>
                     </div>
 
-                    {cars.length === 0 ? (
+                    {allCars.length === 0 ? (
                         <p className="text-gray-400 text-center py-8">Arac bulunamadi.</p>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {cars.map(car => (
-                                <CarCard key={car.turbo_id} car={car} onClick={() => setSelectedCar(car)} />
-                            ))}
-                        </div>
+                        <>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {displayedCars.map(car => (
+                                    <CarCard key={car.turbo_id} car={car} onClick={() => setSelectedCar(car)} />
+                                ))}
+                            </div>
+
+                            {hasMore && (
+                                <div className="mt-6 text-center">
+                                    <button
+                                        onClick={handleLoadMore}
+                                        className="px-8 py-3 rounded-xl bg-blue-500 hover:bg-blue-600 font-semibold transition-colors"
+                                    >
+                                        Daha Fazla Goster ({allCars.length - displayCount} kaldi)
+                                    </button>
+                                </div>
+                            )}
+                        </>
                     )}
 
                     {selectedCar && <CarDetailModal car={selectedCar} onClose={() => setSelectedCar(null)} />}
