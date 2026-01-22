@@ -63,7 +63,7 @@ cd backend
 python api.py
 ```
 
-API http://localhost:8000 adresinde calisacak.
+API <http://localhost:8000> adresinde calisacak.
 
 ### Frontend
 
@@ -79,7 +79,7 @@ cd frontend
 python -m http.server 3000
 ```
 
-Sonra http://localhost:3000 adresini ziyaret edin.
+Sonra <http://localhost:3000> adresini ziyaret edin.
 
 ## API Endpoint'leri
 
@@ -111,6 +111,7 @@ curl -X POST "http://localhost:8000/api/scrape?pages=3"
 ## Teknolojiler
 
 ### Backend
+
 - Python 3.10+
 - FastAPI
 - aiohttp (async HTTP)
@@ -118,6 +119,7 @@ curl -X POST "http://localhost:8000/api/scrape?pages=3"
 - SQLite (veritabani)
 
 ### Frontend
+
 - React 18
 - Tailwind CSS
 - Chart.js
