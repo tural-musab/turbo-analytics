@@ -1,110 +1,113 @@
 """
 Turbo.az Analytics - Web Scraper
-curl_cffi ile Cloudflare bypass destekli scraper
+undetected-chromedriver ile Cloudflare bypass
 """
 
 import asyncio
 import random
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple, Union
 
+import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
-from curl_cffi.requests import AsyncSession
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 
 class TurboAzScraper:
     BASE_URL = "https://turbo.az"
-    CONCURRENT_REQUESTS = 3
-    REQUEST_DELAY = 1.5
+    REQUEST_DELAY = 1.0
 
-    # Chrome tarayıcı impersonation
-    IMPERSONATE_OPTIONS = [
-        "chrome110",
-        "chrome116",
-        "chrome119",
-        "chrome120",
-    ]
-
-    def __init__(self) -> None:
-        self.session: Optional[AsyncSession] = None
+    def __init__(self, headless: bool = False) -> None:
+        self._driver: Optional[uc.Chrome] = None
+        self._headless = headless
         self.total_scraped = 0
         self.errors = 0
         self._makes_cache: Optional[List[Dict]] = None
-        self._impersonate = random.choice(self.IMPERSONATE_OPTIONS)
 
-    async def create_session(self) -> None:
-        """HTTP session olustur (curl_cffi ile)."""
-        self.session = AsyncSession(
-            impersonate=self._impersonate,
-            timeout=60,
-        )
+    def create_session(self) -> None:
+        """Chrome browser oluştur (undetected-chromedriver ile)."""
+        options = uc.ChromeOptions()
 
-        # Ilk olarak ana sayfayi ziyaret et (cookie almak icin)
-        try:
-            response = await self.session.get(self.BASE_URL)
-            print(f"Initial visit: {response.status_code}")
-            await asyncio.sleep(2)
-        except Exception as e:
-            print(f"Initial visit error: {e}")
+        if self._headless:
+            options.add_argument("--headless=new")
 
-    async def close_session(self) -> None:
-        """Session kapat."""
-        if self.session:
-            await self.session.close()
-            self.session = None
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
 
-    async def fetch_page(self, url: str) -> Optional[str]:
-        """Sayfa icerigini cek."""
-        if not self.session:
-            raise RuntimeError("Session is not initialized")
+        print("Chrome browser başlatılıyor...")
+        self._driver = uc.Chrome(options=options)
 
-        delay = self.REQUEST_DELAY + random.uniform(0.5, 1.5)
+        # İlk sayfayı ziyaret et
+        print(f"Navigating to: {self.BASE_URL}")
+        self._driver.get(self.BASE_URL)
+
+        # Sayfanın yüklenmesini bekle
+        time.sleep(5)
+
+        print(f"Page title: {self._driver.title}")
+        print("Browser hazır.")
+
+    def close_session(self) -> None:
+        """Browser kapat."""
+        if self._driver:
+            self._driver.quit()
+            self._driver = None
+
+    def fetch_page(self, url: str) -> Optional[str]:
+        """Sayfa içeriğini çek."""
+        if not self._driver:
+            raise RuntimeError("Browser is not initialized")
+
+        delay = self.REQUEST_DELAY + random.uniform(0.3, 1.0)
 
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = await self.session.get(url)
+                self._driver.get(url)
+                time.sleep(delay)
 
-                if response.status_code == 200:
-                    await asyncio.sleep(delay)
-                    return response.text
-                elif response.status_code == 403:
-                    print(f"HTTP 403 (attempt {attempt + 1}/{max_retries}): {url}")
+                # Sayfanın yüklenmesini bekle
+                WebDriverWait(self._driver, 30).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+
+                html = self._driver.page_source
+
+                # İçerik gerçek mi kontrol et
+                if "products-i" in html or 'name="q[make]"' in html:
+                    return html
+                elif "Just a moment" in html or "challenge" in html.lower():
+                    print(f"Cloudflare challenge (attempt {attempt + 1}/{max_retries}): {url}")
                     if attempt < max_retries - 1:
-                        wait_time = (attempt + 1) * 5
-                        print(f"Waiting {wait_time}s before retry...")
-                        await asyncio.sleep(wait_time)
-                        # Impersonate degistir
-                        self._impersonate = random.choice(self.IMPERSONATE_OPTIONS)
-                        await self.session.close()
-                        self.session = AsyncSession(
-                            impersonate=self._impersonate,
-                            timeout=60,
-                        )
+                        time.sleep(10)
                         continue
                     return None
                 else:
-                    print(f"HTTP {response.status_code}: {url}")
-                    return None
+                    return html
+
             except Exception as exc:
                 self.errors += 1
                 print(f"Fetch error (attempt {attempt + 1}): {url} - {exc}")
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(3)
+                    time.sleep(3)
                     continue
                 return None
 
-        await asyncio.sleep(delay)
         return None
 
-    async def get_makes(self) -> List[Dict]:
-        """Marka listesini cek (ID ve isim)."""
+    def get_makes(self) -> List[Dict]:
+        """Marka listesini çek (ID ve isim)."""
         if self._makes_cache:
             return self._makes_cache
 
         url = f"{self.BASE_URL}/autos"
-        html = await self.fetch_page(url)
+        html = self.fetch_page(url)
 
         if not html:
             return []
@@ -125,10 +128,10 @@ class TurboAzScraper:
         self._makes_cache = makes
         return makes
 
-    async def get_models(self, make_id: int) -> List[Dict]:
-        """Belirli bir marka icin model listesini cek."""
+    def get_models(self, make_id: int) -> List[Dict]:
+        """Belirli bir marka için model listesini çek."""
         url = f"{self.BASE_URL}/autos?q%5Bmake%5D%5B%5D={make_id}"
-        html = await self.fetch_page(url)
+        html = self.fetch_page(url)
 
         if not html:
             return []
@@ -165,7 +168,7 @@ class TurboAzScraper:
         min_year: Optional[int] = None,
         max_year: Optional[int] = None,
     ) -> str:
-        """Filtre parametreleriyle URL olustur."""
+        """Filtre parametreleriyle URL oluştur."""
         params: List[str] = []
         params.append(f"page={page}")
 
@@ -184,7 +187,7 @@ class TurboAzScraper:
 
         return f"{self.BASE_URL}/autos?{'&'.join(params)}"
 
-    async def get_total_pages(
+    def get_total_pages(
         self,
         make_id: Optional[int] = None,
         model_id: Optional[int] = None,
@@ -193,7 +196,7 @@ class TurboAzScraper:
         min_year: Optional[int] = None,
         max_year: Optional[int] = None,
     ) -> int:
-        """Filtreye gore toplam sayfa sayisini bul."""
+        """Filtreye göre toplam sayfa sayısını bul."""
         url = self.build_filter_url(
             page=1,
             make_id=make_id,
@@ -203,7 +206,7 @@ class TurboAzScraper:
             min_year=min_year,
             max_year=max_year,
         )
-        html = await self.fetch_page(url)
+        html = self.fetch_page(url)
 
         if not html:
             return 0
@@ -223,7 +226,7 @@ class TurboAzScraper:
 
     @staticmethod
     def parse_price(price_text: str) -> Tuple[int, str]:
-        """Fiyati parse et."""
+        """Fiyatı parse et."""
         price_text = price_text.strip()
 
         if "₼" in price_text or "AZN" in price_text:
@@ -241,7 +244,7 @@ class TurboAzScraper:
 
     @staticmethod
     def parse_attributes(attr_text: str) -> Dict[str, Optional[Union[int, str]]]:
-        """Ozellikleri parse et (2024, 2.3 L, 0 km)."""
+        """Özellikleri parse et (2024, 2.3 L, 0 km)."""
         parts = attr_text.split(",")
         result: Dict[str, Optional[int | str]] = {
             "year": None,
@@ -270,7 +273,7 @@ class TurboAzScraper:
             "date": parts[1].strip() if len(parts) > 1 else None,
         }
 
-    async def parse_listing_page(
+    def parse_listing_page(
         self,
         page_num: int,
         make_id: Optional[int] = None,
@@ -280,7 +283,7 @@ class TurboAzScraper:
         min_year: Optional[int] = None,
         max_year: Optional[int] = None,
     ) -> List[Dict]:
-        """Liste sayfasindan araclari cek (filtre destekli)."""
+        """Liste sayfasından araçları çek (filtre destekli)."""
         url = self.build_filter_url(
             page=page_num,
             make_id=make_id,
@@ -290,7 +293,7 @@ class TurboAzScraper:
             min_year=min_year,
             max_year=max_year,
         )
-        html = await self.fetch_page(url)
+        html = self.fetch_page(url)
 
         if not html:
             return []
@@ -357,9 +360,9 @@ class TurboAzScraper:
 
         return cars
 
-    async def parse_detail_page(self, car: Dict) -> Dict:
-        """Detay sayfasindan baxis sayisini cek."""
-        html = await self.fetch_page(car["url"])
+    def parse_detail_page(self, car: Dict) -> Dict:
+        """Detay sayfasından bakış sayısını çek."""
+        html = self.fetch_page(car["url"])
 
         if not html:
             return car
@@ -373,7 +376,7 @@ class TurboAzScraper:
         self.total_scraped += 1
         return car
 
-    async def scrape_pages(
+    def scrape_pages(
         self,
         start_page: int = 1,
         end_page: int = 10,
@@ -384,13 +387,13 @@ class TurboAzScraper:
         min_year: Optional[int] = None,
         max_year: Optional[int] = None,
     ) -> List[Dict]:
-        """Belirtilen sayfa araligini scrape et (sıralı - 403 engelini aşmak için)."""
-        print(f"Sayfa {start_page}-{end_page} taraniyor...")
+        """Belirtilen sayfa aralığını scrape et."""
+        print(f"Sayfa {start_page}-{end_page} taranıyor...")
 
         all_cars: List[Dict] = []
 
         for page_num in range(start_page, end_page + 1):
-            cars = await self.parse_listing_page(
+            cars = self.parse_listing_page(
                 page_num,
                 make_id=make_id,
                 model_id=model_id,
@@ -403,58 +406,58 @@ class TurboAzScraper:
 
             progress = page_num - start_page + 1
             total = end_page - start_page + 1
-            print(f"Sayfa ilerleme: {progress}/{total} ({len(all_cars)} arac)")
+            print(f"Sayfa ilerleme: {progress}/{total} ({len(all_cars)} araç)")
 
-            # Her sayfa arasinda bekle
-            await asyncio.sleep(random.uniform(1.5, 3.0))
+            # Her sayfa arasında bekle
+            time.sleep(random.uniform(1.0, 2.0))
 
-        print(f"{len(all_cars)} arac bulundu")
+        print(f"{len(all_cars)} araç bulundu")
         return all_cars
 
-    async def scrape_with_details(self, cars: List[Dict], batch_size: int = 5) -> List[Dict]:
-        """Araclarin detay sayfalarini cek (sıralı)."""
-        print(f"{len(cars)} arac icin detaylar cekiliyor...")
+    def scrape_with_details(self, cars: List[Dict], batch_size: int = 5) -> List[Dict]:
+        """Araçların detay sayfalarını çek."""
+        print(f"{len(cars)} araç için detaylar çekiliyor...")
 
         detailed_cars: List[Dict] = []
 
         for i, car in enumerate(cars):
-            detailed_car = await self.parse_detail_page(car)
+            detailed_car = self.parse_detail_page(car)
             detailed_cars.append(detailed_car)
 
             progress = i + 1
             if progress % 10 == 0 or progress == len(cars):
-                print(f"Ilerleme: {progress}/{len(cars)} ({progress * 100 // len(cars)}%)")
+                print(f"İlerleme: {progress}/{len(cars)} ({progress * 100 // len(cars)}%)")
 
         return detailed_cars
 
-    async def run(self, pages: int = 5, with_details: bool = True) -> List[Dict]:
+    def run(self, pages: int = 5, with_details: bool = True) -> List[Dict]:
         """Ana scraping fonksiyonu."""
         start_time = time.time()
 
-        print("Turbo.az Scraper baslatiliyor...")
+        print("Turbo.az Scraper başlatılıyor (undetected-chromedriver)...")
         print(f"Hedef: {pages} sayfa")
         print("-" * 40)
 
-        await self.create_session()
+        self.create_session()
 
         try:
-            cars = await self.scrape_pages(1, pages)
+            cars = self.scrape_pages(1, pages)
 
             if with_details and cars:
-                cars = await self.scrape_with_details(cars)
+                cars = self.scrape_with_details(cars)
 
             elapsed = time.time() - start_time
             print("-" * 40)
-            print("Tamamlandi!")
-            print(f"Toplam arac: {len(cars)}")
+            print("Tamamlandı!")
+            print(f"Toplam araç: {len(cars)}")
             print(f"Hatalar: {self.errors}")
-            print(f"Sure: {elapsed:.1f} saniye")
+            print(f"Süre: {elapsed:.1f} saniye")
 
             return cars
         finally:
-            await self.close_session()
+            self.close_session()
 
-    async def run_filtered(
+    def run_filtered(
         self,
         make_id: Optional[int] = None,
         model_id: Optional[int] = None,
@@ -482,15 +485,15 @@ class TurboAzScraper:
         if max_year:
             filters.append(f"max_year={max_year}")
 
-        print("Turbo.az Filtered Scraper baslatiliyor...")
+        print("Turbo.az Filtered Scraper başlatılıyor (undetected-chromedriver)...")
         print(f"Filtreler: {', '.join(filters) if filters else 'Yok'}")
         print("-" * 40)
 
-        await self.create_session()
+        self.create_session()
 
         try:
-            # Toplam sayfa sayisini bul
-            total_pages = await self.get_total_pages(
+            # Toplam sayfa sayısını bul
+            total_pages = self.get_total_pages(
                 make_id=make_id,
                 model_id=model_id,
                 min_price=min_price,
@@ -511,8 +514,8 @@ class TurboAzScraper:
                     "elapsed": 0,
                 }
 
-            # Sayfalari tara
-            cars = await self.scrape_pages(
+            # Sayfaları tara
+            cars = self.scrape_pages(
                 start_page=1,
                 end_page=pages_to_scrape,
                 make_id=make_id,
@@ -524,14 +527,14 @@ class TurboAzScraper:
             )
 
             if with_details and cars:
-                cars = await self.scrape_with_details(cars)
+                cars = self.scrape_with_details(cars)
 
             elapsed = time.time() - start_time
             print("-" * 40)
-            print("Tamamlandi!")
-            print(f"Toplam arac: {len(cars)}")
+            print("Tamamlandı!")
+            print(f"Toplam araç: {len(cars)}")
             print(f"Hatalar: {self.errors}")
-            print(f"Sure: {elapsed:.1f} saniye")
+            print(f"Süre: {elapsed:.1f} saniye")
 
             return {
                 "cars": cars,
@@ -541,24 +544,105 @@ class TurboAzScraper:
                 "elapsed": round(elapsed, 1),
             }
         finally:
-            await self.close_session()
+            self.close_session()
 
 
-async def main() -> None:
+# Async wrapper for API compatibility
+async def run_scraper_async(
+    pages: int = 5,
+    with_details: bool = True,
+    headless: bool = False,
+) -> List[Dict]:
+    """Async wrapper for scraper (runs in thread pool)."""
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as pool:
+        scraper = TurboAzScraper(headless=headless)
+        result = await loop.run_in_executor(
+            pool, lambda: scraper.run(pages=pages, with_details=with_details)
+        )
+    return result
+
+
+async def run_filtered_scraper_async(
+    make_id: Optional[int] = None,
+    model_id: Optional[int] = None,
+    min_price: Optional[int] = None,
+    max_price: Optional[int] = None,
+    min_year: Optional[int] = None,
+    max_year: Optional[int] = None,
+    max_pages: int = 50,
+    with_details: bool = True,
+    headless: bool = False,
+) -> Dict:
+    """Async wrapper for filtered scraper (runs in thread pool)."""
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as pool:
+        scraper = TurboAzScraper(headless=headless)
+        result = await loop.run_in_executor(
+            pool,
+            lambda: scraper.run_filtered(
+                make_id=make_id,
+                model_id=model_id,
+                min_price=min_price,
+                max_price=max_price,
+                min_year=min_year,
+                max_year=max_year,
+                max_pages=max_pages,
+                with_details=with_details,
+            ),
+        )
+    return result
+
+
+async def get_makes_async(headless: bool = False) -> List[Dict]:
+    """Async wrapper for get_makes."""
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as pool:
+        scraper = TurboAzScraper(headless=headless)
+
+        def _get_makes():
+            scraper.create_session()
+            try:
+                return scraper.get_makes()
+            finally:
+                scraper.close_session()
+
+        result = await loop.run_in_executor(pool, _get_makes)
+    return result
+
+
+async def get_models_async(make_id: int, headless: bool = False) -> List[Dict]:
+    """Async wrapper for get_models."""
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as pool:
+        scraper = TurboAzScraper(headless=headless)
+
+        def _get_models():
+            scraper.create_session()
+            try:
+                return scraper.get_models(make_id)
+            finally:
+                scraper.close_session()
+
+        result = await loop.run_in_executor(pool, _get_models)
+    return result
+
+
+def main() -> None:
     scraper = TurboAzScraper()
-    cars = await scraper.run(pages=3, with_details=True)
+    cars = scraper.run(pages=3, with_details=True)
 
     sorted_cars = sorted(cars, key=lambda x: x["views"], reverse=True)
 
-    print("\nEn cok baxis alan ilk 10:")
+    print("\nEn çok bakış alan ilk 10:")
     print("-" * 60)
     for i, car in enumerate(sorted_cars[:10], 1):
         name = car["name"][:30]
         views = car["views"]
         price = car["price"]
         currency = car["currency"]
-        print(f"{i:2}. {name:30} | {views:>6} baxis | {price:>8} {currency}")
+        print(f"{i:2}. {name:30} | {views:>6} bakış | {price:>8} {currency}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

@@ -50,7 +50,13 @@ from scheduler import (
     toggle_job_active,
     get_job_runs,
 )
-from scraper import TurboAzScraper
+from scraper import (
+    TurboAzScraper,
+    run_scraper_async,
+    run_filtered_scraper_async,
+    get_makes_async,
+    get_models_async,
+)
 
 
 @asynccontextmanager
@@ -128,8 +134,7 @@ async def list_cars(
 @app.post("/api/scrape")
 async def trigger_scrape(pages: int = Query(5, ge=1, le=50)):
     """Manuel scraping tetikle (session takipli)."""
-    scraper = TurboAzScraper()
-    cars = await scraper.run(pages=pages, with_details=True)
+    cars = await run_scraper_async(pages=pages, with_details=True)
 
     # Session ile kaydet
     stats = save_cars_batch_with_session(cars, filters={"pages": pages})
@@ -154,25 +159,15 @@ async def get_brands():
 @app.get("/api/makes")
 async def get_turbo_makes():
     """Turbo.az'daki tum marka listesi (ID ve isim)."""
-    scraper = TurboAzScraper()
-    await scraper.create_session()
-    try:
-        makes = await scraper.get_makes()
-        return makes
-    finally:
-        await scraper.close_session()
+    makes = await get_makes_async()
+    return makes
 
 
 @app.get("/api/models/{make_id}")
 async def get_turbo_models(make_id: int):
     """Belirli bir marka icin model listesi."""
-    scraper = TurboAzScraper()
-    await scraper.create_session()
-    try:
-        models = await scraper.get_models(make_id)
-        return models
-    finally:
-        await scraper.close_session()
+    models = await get_models_async(make_id)
+    return models
 
 
 @app.get("/api/filter-info")
@@ -185,23 +180,33 @@ async def get_filter_info(
     max_year: Optional[int] = None,
 ):
     """Filtreye gore toplam sayfa ve tahmini arac sayisi."""
-    scraper = TurboAzScraper()
-    await scraper.create_session()
-    try:
-        total_pages = await scraper.get_total_pages(
-            make_id=make_id,
-            model_id=model_id,
-            min_price=min_price,
-            max_price=max_price,
-            min_year=min_year,
-            max_year=max_year,
-        )
-        return {
-            "total_pages": total_pages,
-            "estimated_cars": total_pages * 36,
-        }
-    finally:
-        await scraper.close_session()
+    from concurrent.futures import ThreadPoolExecutor
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as pool:
+        scraper = TurboAzScraper()
+
+        def _get_total_pages():
+            scraper.create_session()
+            try:
+                return scraper.get_total_pages(
+                    make_id=make_id,
+                    model_id=model_id,
+                    min_price=min_price,
+                    max_price=max_price,
+                    min_year=min_year,
+                    max_year=max_year,
+                )
+            finally:
+                scraper.close_session()
+
+        total_pages = await loop.run_in_executor(pool, _get_total_pages)
+
+    return {
+        "total_pages": total_pages,
+        "estimated_cars": total_pages * 36,
+    }
 
 
 @app.post("/api/scrape-filtered")
@@ -216,8 +221,7 @@ async def trigger_filtered_scrape(
     with_details: bool = True,
 ):
     """Filtrelenmiş scraping tetikle (session takipli)."""
-    scraper = TurboAzScraper()
-    result = await scraper.run_filtered(
+    result = await run_filtered_scraper_async(
         make_id=make_id,
         model_id=model_id,
         min_price=min_price,
